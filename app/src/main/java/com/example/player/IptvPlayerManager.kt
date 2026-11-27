@@ -11,7 +11,10 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -21,6 +24,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.MalformedURLException
 import java.net.URL
+import java.nio.ByteBuffer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,8 +54,57 @@ class IptvPlayerManager(context: Context) {
   private var bufferingWatchdogJob: Job? = null
   private var steadyResetJob: Job? = null
 
+  private class DiscontinuityTolerantAudioSink(
+    private val delegate: AudioSink,
+  ) : ForwardingAudioSink(delegate) {
+    override fun setListener(listener: AudioSink.Listener) {
+      super.setListener(
+        object : AudioSink.Listener by listener {
+          override fun onAudioSinkError(audioSinkError: Exception) {
+            if (audioSinkError is AudioSink.UnexpectedDiscontinuityException) {
+              delegate.handleDiscontinuity()
+              return
+            }
+            listener.onAudioSinkError(audioSinkError)
+          }
+        }
+      )
+    }
+
+    override fun handleBuffer(
+      buffer: ByteBuffer,
+      presentationTimeUs: Long,
+      encodedAccessUnitCount: Int,
+    ): Boolean =
+      try {
+        super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+      } catch (_: AudioSink.UnexpectedDiscontinuityException) {
+        delegate.handleDiscontinuity()
+        try {
+          super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        } catch (_: AudioSink.UnexpectedDiscontinuityException) {
+          delegate.flush()
+          super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        }
+      }
+  }
+
+  private val renderersFactory =
+    object : DefaultRenderersFactory(context.applicationContext) {
+      override fun buildAudioSink(
+        context: Context,
+        enableFloatOutput: Boolean,
+        enableAudioTrackPlaybackParams: Boolean,
+      ): AudioSink? {
+        val delegate =
+          super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
+            ?: return null
+        return DiscontinuityTolerantAudioSink(delegate)
+      }
+    }
+
   val player: ExoPlayer =
-    ExoPlayer.Builder(context.applicationContext)
+    ExoPlayer.Builder(context.applicationContext, renderersFactory)
       .setAudioAttributes(
         AudioAttributes.Builder()
           .setUsage(C.USAGE_MEDIA)
@@ -93,8 +146,20 @@ class IptvPlayerManager(context: Context) {
       }
 
       override fun onPlayerError(error: PlaybackException) {
+        if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW && !isUserPaused) {
+          player.seekToDefaultPosition()
+          player.prepare()
+          player.playWhenReady = true
+          return
+        }
+
         val failedChannel = currentChannel
-        if (failedChannel != null && !isUserPaused && hasStartedPlayingCurrentChannel &&
+        val isRecoverableAudioDiscontinuity =
+          hasCause<AudioSink.UnexpectedDiscontinuityException>(error) ||
+            error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED
+        if (failedChannel != null &&
+          !isUserPaused &&
+          (hasStartedPlayingCurrentChannel || isRecoverableAudioDiscontinuity) &&
           tryScheduleAutoReconnect(failedChannel)
         ) {
           return
@@ -501,6 +566,17 @@ class IptvPlayerManager(context: Context) {
           autoReconnectAttempt = 0
         }
       }
+  }
+
+  private inline fun <reified T : Throwable> hasCause(throwable: Throwable?): Boolean {
+    var cur = throwable
+    var depth = 0
+    while (cur != null && depth < 12) {
+      if (cur is T) return true
+      cur = cur.cause
+      depth++
+    }
+    return false
   }
 
   private companion object {
