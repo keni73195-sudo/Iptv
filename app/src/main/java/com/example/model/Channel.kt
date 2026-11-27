@@ -6,10 +6,14 @@ enum class ChannelCategory {
   NEWS,
   SPORTS,
   MOVIES,
+  COMEDY,
+  ENTERTAINMENT,
   KIDS,
   DOCUMENTARY,
   MUSIC,
+  RELIGIOUS,
   GENERAL,
+  ADULT,
 }
 
 data class Channel(
@@ -27,6 +31,8 @@ data class Channel(
   val category: ChannelCategory,
   val monogram: String,
   val accentIndex: Int,
+  val country: String = "International",
+  val language: String = "Autre",
 )
 
 sealed interface PlaybackStatus {
@@ -52,5 +58,13 @@ enum class AspectRatioMode {
 enum class ChannelSortMode {
   DEFAULT,
   CATEGORY,
+  COUNTRY,
+  LANGUAGE,
   ALPHABETICAL,
+}
+
+enum class GlobalGroupMode {
+  CATEGORY,
+  COUNTRY,
+  LANGUAGE,
 }

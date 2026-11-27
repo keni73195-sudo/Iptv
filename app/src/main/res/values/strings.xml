@@ -16,10 +16,14 @@
     <string name="filter_news">Info</string>
     <string name="filter_sports">Sport</string>
     <string name="filter_movies">Cinéma</string>
+    <string name="filter_comedy">Comédie</string>
+    <string name="filter_entertainment">Divertissement</string>
     <string name="filter_kids">Jeunesse</string>
     <string name="filter_documentary">Docs</string>
     <string name="filter_music">Musique</string>
+    <string name="filter_religious">Religion</string>
     <string name="filter_general">Général &amp; TV</string>
+    <string name="filter_adult">+18 Adultes</string>
     <string name="next_program_label">Ensuite</string>
     <string name="tv_remote_fullscreen_hint">OK plein écran  •  Maintenir OK : Mes chaînes</string>
     <string name="fullscreen_remote_hint">▲▼ Chaîne  •  OK Contrôles  •  Retour Quitter</string>
@@ -50,7 +54,7 @@
     <string name="channels_count_format">%1$d chaînes disponibles</string>
     <string name="sync_all_sources">Tout fusionner (%1$d sources)</string>
     <string name="syncing_sources_status">Synchronisation des playlists…</string>
-    <string name="sources_section_title">Sources intégrées (AFR, BE, CA, FR, NG, UK, US, ZA)</string>
+    <string name="sources_section_title">Sources intégrées (Monde, Pays, Langues, Sport, Cinéma, +18)</string>
     <string name="mini_preview_expand">Revenir au lecteur</string>
     <string name="jump_to_live_channel">Chaîne active</string>
     <string name="reset_filters">Tout afficher</string>
@@ -59,4 +63,17 @@
     <string name="continue_watching_title">Continuer à regarder</string>
     <string name="clear_history">Effacer</string>
     <string name="history_cleared_banner">Historique de lecture effacé</string>
+    <string name="filter_country_all">Tous les pays</string>
+    <string name="filter_language_all">Toutes les langues</string>
+    <string name="picker_country_title">Filtrer par pays</string>
+    <string name="picker_language_title">Filtrer par langue</string>
+    <string name="picker_search_hint">Rechercher…</string>
+    <string name="adult_dialog_title">Contenu réservé aux adultes (+18)</string>
+    <string name="adult_dialog_body">Cette section contient des chaînes destinées à un public majeur (+18). Confirmez-vous avoir au moins 18 ans ?</string>
+    <string name="adult_dialog_confirm">J\'ai 18 ans ou plus</string>
+    <string name="adult_lock_label">Masquer +18</string>
+    <string name="adult_unlock_label">+18 Adultes</string>
+    <string name="global_group_category">Par Catégorie</string>
+    <string name="global_group_country">Par Pays</string>
+    <string name="global_group_language">Par Langue</string>
 </resources>

@@ -48,16 +48,20 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
+import com.example.R
 import com.example.model.Channel
 import com.example.model.ChannelCategory
 import com.example.model.PlaybackStatus
 import com.example.ui.IptvUiState
+import com.example.ui.components.AdultConfirmationDialog
 import com.example.ui.components.BroadcastTopHeaderAndSearchBar
 import com.example.ui.components.CategoryFilterRow
 import com.example.ui.components.ChannelRowCard
 import com.example.ui.components.ContinueWatchingSection
+import com.example.ui.components.CountryLanguagePickerDialog
 import com.example.ui.components.EmptyChannelsState
 import com.example.ui.components.GlobalCatalogView
 import com.example.ui.components.ImportPlaylistDialog
@@ -81,6 +85,12 @@ fun IptvScreen(
   onToggleFullscreen: () -> Unit,
   onExitFullscreen: () -> Unit,
   onCategorySelect: (ChannelCategory) -> Unit,
+  onCountrySelect: (String?) -> Unit,
+  onLanguageSelect: (String?) -> Unit,
+  onRequestUnlockAdult: () -> Unit,
+  onConfirmUnlockAdult: () -> Unit,
+  onLockAdult: () -> Unit,
+  onDismissAdultPrompt: () -> Unit,
   onSearchQueryChange: (String) -> Unit,
   onToggleHideBroken: () -> Unit,
   onCycleSortMode: () -> Unit,
@@ -112,12 +122,22 @@ fun IptvScreen(
     }
   }
 
-  LaunchedEffect(uiState.selectedCategory, uiState.searchQuery, uiState.sortMode, uiState.hideBrokenChannels) {
+  LaunchedEffect(
+    uiState.selectedCategory,
+    uiState.selectedCountry,
+    uiState.selectedLanguage,
+    uiState.isAdultUnlocked,
+    uiState.searchQuery,
+    uiState.sortMode,
+    uiState.hideBrokenChannels,
+  ) {
     listState.scrollToItem(0)
   }
 
   val activeIsFavorite = uiState.activeChannel?.id?.let { it in uiState.favoriteIds } == true
   var selectedTab by remember { mutableStateOf("TV") }
+  var isCountryPickerOpen by remember { mutableStateOf(false) }
+  var isLanguagePickerOpen by remember { mutableStateOf(false) }
   val channelListFocusRequester = remember { FocusRequester() }
 
   LaunchedEffect(isTelevision, uiState.isFullscreen, selectedTab) {
@@ -210,6 +230,7 @@ fun IptvScreen(
                   brokenChannelIds = uiState.brokenChannelIds,
                   hideBrokenChannels = uiState.hideBrokenChannels,
                   sortMode = uiState.sortMode,
+                  isAdultUnlocked = uiState.isAdultUnlocked,
                   activeChannelId = uiState.activeChannel?.id,
                   isPlaying = uiState.playbackStatus is PlaybackStatus.Playing,
                   onSelectChannel = { channel ->
@@ -219,6 +240,8 @@ fun IptvScreen(
                   onToggleFavorite = onToggleFavorite,
                   onToggleHideBroken = onToggleHideBroken,
                   onCycleSortMode = onCycleSortMode,
+                  onRequestUnlockAdult = onRequestUnlockAdult,
+                  onLockAdult = onLockAdult,
                   onClearRecent = onClearRecentChannels,
                   modifier = Modifier.fillMaxSize(),
                 )
@@ -248,10 +271,16 @@ fun IptvScreen(
                     ) {
                       CategoryFilterRow(
                         selectedCategory = uiState.selectedCategory,
+                        selectedCountry = uiState.selectedCountry,
+                        selectedLanguage = uiState.selectedLanguage,
+                        isAdultUnlocked = uiState.isAdultUnlocked,
                         hideBrokenChannels = uiState.hideBrokenChannels,
                         sortMode = uiState.sortMode,
                         brokenCount = uiState.brokenChannelIds.size,
                         onCategorySelect = onCategorySelect,
+                        onOpenCountryPicker = { isCountryPickerOpen = true },
+                        onOpenLanguagePicker = { isLanguagePickerOpen = true },
+                        onLockAdult = onLockAdult,
                         onToggleHideBroken = onToggleHideBroken,
                         onCycleSortMode = onCycleSortMode,
                         modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
@@ -266,6 +295,8 @@ fun IptvScreen(
                         onResetFilters = {
                           onSearchQueryChange("")
                           onCategorySelect(ChannelCategory.ALL)
+                          onCountrySelect(null)
+                          onLanguageSelect(null)
                           if (uiState.hideBrokenChannels) onToggleHideBroken()
                         },
                         modifier =
@@ -388,10 +419,16 @@ fun IptvScreen(
 
                     CategoryFilterRow(
                       selectedCategory = uiState.selectedCategory,
+                      selectedCountry = uiState.selectedCountry,
+                      selectedLanguage = uiState.selectedLanguage,
+                      isAdultUnlocked = uiState.isAdultUnlocked,
                       hideBrokenChannels = uiState.hideBrokenChannels,
                       sortMode = uiState.sortMode,
                       brokenCount = uiState.brokenChannelIds.size,
                       onCategorySelect = onCategorySelect,
+                      onOpenCountryPicker = { isCountryPickerOpen = true },
+                      onOpenLanguagePicker = { isLanguagePickerOpen = true },
+                      onLockAdult = onLockAdult,
                       onToggleHideBroken = onToggleHideBroken,
                       onCycleSortMode = onCycleSortMode,
                       modifier = Modifier.fillMaxWidth(),
@@ -410,6 +447,8 @@ fun IptvScreen(
                       onResetFilters = {
                         onSearchQueryChange("")
                         onCategorySelect(ChannelCategory.ALL)
+                        onCountrySelect(null)
+                        onLanguageSelect(null)
                         if (uiState.hideBrokenChannels) onToggleHideBroken()
                       },
                       modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -434,6 +473,35 @@ fun IptvScreen(
       onImportFromUrl = onImportFromUrl,
       onImportFromText = onImportFromText,
       onResetDefault = onResetDefaultPlaylist,
+    )
+  }
+
+  if (isCountryPickerOpen) {
+    CountryLanguagePickerDialog(
+      title = stringResource(R.string.picker_country_title),
+      allOptionLabel = stringResource(R.string.filter_country_all),
+      selectedValue = uiState.selectedCountry,
+      options = uiState.availableCountries,
+      onSelect = onCountrySelect,
+      onDismiss = { isCountryPickerOpen = false },
+    )
+  }
+
+  if (isLanguagePickerOpen) {
+    CountryLanguagePickerDialog(
+      title = stringResource(R.string.picker_language_title),
+      allOptionLabel = stringResource(R.string.filter_language_all),
+      selectedValue = uiState.selectedLanguage,
+      options = uiState.availableLanguages,
+      onSelect = onLanguageSelect,
+      onDismiss = { isLanguagePickerOpen = false },
+    )
+  }
+
+  if (uiState.pendingAdultPrompt) {
+    AdultConfirmationDialog(
+      onConfirm = onConfirmUnlockAdult,
+      onDismiss = onDismissAdultPrompt,
     )
   }
 }
@@ -478,7 +546,12 @@ private fun ChannelListLazyColumn(
         EmptyChannelsState(
           isFavoritesFilter = uiState.selectedCategory == ChannelCategory.FAVORITES,
           onResetFilters =
-            if (uiState.searchQuery.isNotBlank() || uiState.selectedCategory != ChannelCategory.ALL || uiState.hideBrokenChannels) {
+            if (uiState.searchQuery.isNotBlank() ||
+              uiState.selectedCategory != ChannelCategory.ALL ||
+              uiState.selectedCountry != null ||
+              uiState.selectedLanguage != null ||
+              uiState.hideBrokenChannels
+            ) {
               onResetFilters
             } else {
               null

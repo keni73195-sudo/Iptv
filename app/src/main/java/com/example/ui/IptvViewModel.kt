@@ -29,11 +29,17 @@ data class IptvUiState(
   val recentChannels: List<Channel> = emptyList(),
   val activeChannel: Channel? = null,
   val selectedCategory: ChannelCategory = ChannelCategory.ALL,
+  val selectedCountry: String? = null,
+  val selectedLanguage: String? = null,
+  val availableCountries: List<Pair<String, Int>> = emptyList(),
+  val availableLanguages: List<Pair<String, Int>> = emptyList(),
   val searchQuery: String = "",
   val favoriteIds: Set<String> = emptySet(),
   val brokenChannelIds: Set<String> = emptySet(),
   val hideBrokenChannels: Boolean = false,
   val sortMode: ChannelSortMode = ChannelSortMode.CATEGORY,
+  val isAdultUnlocked: Boolean = false,
+  val pendingAdultPrompt: Boolean = false,
   val playbackStatus: PlaybackStatus = PlaybackStatus.Idle,
   val isMuted: Boolean = false,
   val liveResolutionLabel: String? = null,
@@ -49,9 +55,12 @@ data class IptvUiState(
 
 private data class FilterControls(
   val selectedCategory: ChannelCategory,
+  val selectedCountry: String?,
+  val selectedLanguage: String?,
   val searchQuery: String,
   val hideBrokenChannels: Boolean,
   val sortMode: ChannelSortMode,
+  val isAdultUnlocked: Boolean,
   val aspectRatioMode: AspectRatioMode,
   val isFullscreen: Boolean,
 )
@@ -63,6 +72,7 @@ private data class DialogAndSyncControls(
   val importError: String?,
   val feedbackBanner: String?,
   val dialedChannelInput: String?,
+  val pendingAdultPrompt: Boolean,
 )
 
 class IptvViewModel(application: Application) : AndroidViewModel(application) {
@@ -82,7 +92,12 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   private val _hideBrokenChannels = MutableStateFlow(false)
   private val _sortMode = MutableStateFlow(ChannelSortMode.CATEGORY)
   private val _selectedCategory = MutableStateFlow(ChannelCategory.ALL)
+  private val _selectedCountry = MutableStateFlow<String?>(null)
+  private val _selectedLanguage = MutableStateFlow<String?>(null)
   private val _searchQuery = MutableStateFlow("")
+  private val _isAdultUnlocked = MutableStateFlow(false)
+  private val _pendingAdultPrompt = MutableStateFlow(false)
+  private var switchCategoryToAdultOnConfirm = false
   private val _aspectRatioMode = MutableStateFlow(AspectRatioMode.FIT)
   private val _isFullscreen = MutableStateFlow(false)
   private val _isImportDialogOpen = MutableStateFlow(false)
@@ -95,13 +110,26 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
   private val filterControlsFlow =
     combine(
-      _selectedCategory,
+      combine(_selectedCategory, _selectedCountry, _selectedLanguage) { cat, country, lang ->
+        Triple(cat, country, lang)
+      },
       _searchQuery,
-      _hideBrokenChannels,
-      _sortMode,
+      combine(_hideBrokenChannels, _sortMode, _isAdultUnlocked) { hideBroken, sortMode, adult ->
+        Triple(hideBroken, sortMode, adult)
+      },
       combine(_aspectRatioMode, _isFullscreen) { a, f -> a to f },
-    ) { category, query, hideBroken, sortMode, display ->
-      FilterControls(category, query, hideBroken, sortMode, display.first, display.second)
+    ) { taxonomy, query, options, display ->
+      FilterControls(
+        selectedCategory = taxonomy.first,
+        selectedCountry = taxonomy.second,
+        selectedLanguage = taxonomy.third,
+        searchQuery = query,
+        hideBrokenChannels = options.first,
+        sortMode = options.second,
+        isAdultUnlocked = options.third,
+        aspectRatioMode = display.first,
+        isFullscreen = display.second,
+      )
     }
 
   private val dialogControlsFlow =
@@ -109,9 +137,17 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
       combine(_isImportDialogOpen, _isImporting, _isSyncingSources) { o, i, s -> Triple(o, i, s) },
       _importError,
       _feedbackBanner,
-      _dialedChannelInput,
-    ) { flags, error, banner, dialed ->
-      DialogAndSyncControls(flags.first, flags.second, flags.third, error, banner, dialed)
+      combine(_dialedChannelInput, _pendingAdultPrompt) { dialed, adultPrompt -> dialed to adultPrompt },
+    ) { flags, error, banner, extras ->
+      DialogAndSyncControls(
+        isImportDialogOpen = flags.first,
+        isImporting = flags.second,
+        isSyncingSources = flags.third,
+        importError = error,
+        feedbackBanner = banner,
+        dialedChannelInput = extras.first,
+        pendingAdultPrompt = extras.second,
+      )
     }
 
   private val channelTagsFlow =
@@ -139,31 +175,69 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
       ) { channels, activeId, channelTags, playerInfo, controlsPair ->
         val (filters, dialog) = controlsPair
         val (favoriteIds, brokenIds, recentIds) = channelTags
-        val channelsById = channels.associateBy { it.id }
+        val adultUnlocked = filters.isAdultUnlocked
+        val ageSafeChannels =
+          if (adultUnlocked) channels else channels.filter { it.category != ChannelCategory.ADULT }
+        val channelsById = ageSafeChannels.associateBy { it.id }
+
         val recentChannels =
           recentIds.mapNotNull { id ->
             val ch = channelsById[id] ?: return@mapNotNull null
             if (filters.hideBrokenChannels && ch.id in brokenIds) null else ch
           }
         val activeChannel =
-          channels.firstOrNull { it.id == activeId } ?: channels.firstOrNull()
+          ageSafeChannels.firstOrNull { it.id == activeId } ?: ageSafeChannels.firstOrNull()
+
+        val availableCountries =
+          ageSafeChannels
+            .groupingBy { it.country }
+            .eachCount()
+            .entries
+            .sortedWith(
+              compareBy<Map.Entry<String, Int>> { if (it.key == "International") 1 else 0 }
+                .thenByDescending { it.value }
+                .thenBy { it.key.lowercase() }
+            )
+            .map { it.key to it.value }
+
+        val availableLanguages =
+          ageSafeChannels
+            .groupingBy { it.language }
+            .eachCount()
+            .entries
+            .sortedWith(
+              compareBy<Map.Entry<String, Int>> { if (it.key == "Autre") 1 else 0 }
+                .thenByDescending { it.value }
+                .thenBy { it.key.lowercase() }
+            )
+            .map { it.key to it.value }
+
         val query = filters.searchQuery.trim()
         val filtered =
-          channels.filter { channel ->
+          ageSafeChannels.filter { channel ->
             val matchesCategory =
               when (filters.selectedCategory) {
                 ChannelCategory.ALL -> true
                 ChannelCategory.FAVORITES -> channel.id in favoriteIds
+                ChannelCategory.ADULT -> adultUnlocked && channel.category == ChannelCategory.ADULT
                 else -> channel.category == filters.selectedCategory
               }
+            val matchesCountry =
+              filters.selectedCountry == null ||
+                channel.country.equals(filters.selectedCountry, ignoreCase = true)
+            val matchesLanguage =
+              filters.selectedLanguage == null ||
+                channel.language.equals(filters.selectedLanguage, ignoreCase = true)
             val matchesQuery =
               query.isEmpty() ||
                 channel.displayTitle.contains(query, ignoreCase = true) ||
+                channel.country.contains(query, ignoreCase = true) ||
+                channel.language.contains(query, ignoreCase = true) ||
                 channel.tvgId.contains(query, ignoreCase = true) ||
                 channel.groupTitle?.contains(query, ignoreCase = true) == true ||
                 channel.number.toString().padStart(2, '0').contains(query)
             val matchesBroken = if (filters.hideBrokenChannels) channel.id !in brokenIds else true
-            matchesCategory && matchesQuery && matchesBroken
+            matchesCategory && matchesCountry && matchesLanguage && matchesQuery && matchesBroken
           }
 
         val sorted =
@@ -172,6 +246,18 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             ChannelSortMode.CATEGORY ->
               filtered.sortedWith(
                 compareBy<Channel> { categorySortOrder(it.category) }
+                  .thenBy { it.displayTitle.lowercase() }
+              )
+            ChannelSortMode.COUNTRY ->
+              filtered.sortedWith(
+                compareBy<Channel> { if (it.country == "International") 1 else 0 }
+                  .thenBy { it.country.lowercase() }
+                  .thenBy { it.displayTitle.lowercase() }
+              )
+            ChannelSortMode.LANGUAGE ->
+              filtered.sortedWith(
+                compareBy<Channel> { if (it.language == "Autre") 1 else 0 }
+                  .thenBy { it.language.lowercase() }
                   .thenBy { it.displayTitle.lowercase() }
               )
             ChannelSortMode.ALPHABETICAL ->
@@ -188,16 +274,22 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
           }
 
         IptvUiState(
-          allChannels = channels,
+          allChannels = ageSafeChannels,
           filteredChannels = orderedChannels,
           recentChannels = recentChannels,
           activeChannel = activeChannel,
           selectedCategory = filters.selectedCategory,
+          selectedCountry = filters.selectedCountry,
+          selectedLanguage = filters.selectedLanguage,
+          availableCountries = availableCountries,
+          availableLanguages = availableLanguages,
           searchQuery = filters.searchQuery,
           favoriteIds = favoriteIds,
           brokenChannelIds = brokenIds,
           hideBrokenChannels = filters.hideBrokenChannels,
           sortMode = filters.sortMode,
+          isAdultUnlocked = adultUnlocked,
+          pendingAdultPrompt = dialog.pendingAdultPrompt,
           playbackStatus = playerInfo.first,
           isMuted = playerInfo.second,
           liveResolutionLabel = playerInfo.third,
@@ -216,9 +308,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue =
           IptvUiState(
-            allChannels = _channels.value,
-            filteredChannels = _channels.value,
-            activeChannel = _channels.value.firstOrNull(),
+            allChannels = _channels.value.filter { it.category != ChannelCategory.ADULT },
+            filteredChannels = _channels.value.filter { it.category != ChannelCategory.ADULT },
+            activeChannel = _channels.value.firstOrNull { it.category != ChannelCategory.ADULT },
           ),
       )
 
@@ -256,11 +348,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             val parsed = M3uParser.parse(savedCustomM3u)
             when {
               parsed.isEmpty() -> bundledChannels
-              !alreadyAutoSynced -> {
-                val seenUrls = parsed.map { it.streamUrl }.toHashSet()
-                val newBundled = bundledChannels.filter { seenUrls.add(it.streamUrl) }
-                (parsed + newBundled).mapIndexed { index, ch -> ch.copy(number = index + 1) }
-              }
+              !alreadyAutoSynced -> M3uParser.mergeEnrichedChannels(parsed, bundledChannels)
               else -> parsed
             }
           } else {
@@ -288,8 +376,12 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     playSelectedChannel(channel)
   }
 
+  private fun ageSafeAllChannels(): List<Channel> =
+    if (_isAdultUnlocked.value) _channels.value
+    else _channels.value.filter { it.category != ChannelCategory.ADULT }
+
   private fun updateZapAnchors(channel: Channel) {
-    val currentList = uiState.value.filteredChannels.ifEmpty { _channels.value }
+    val currentList = uiState.value.filteredChannels.ifEmpty { ageSafeAllChannels() }
     val broken = _brokenChannelIds.value
     val idx = currentList.indexOfFirst { it.id == channel.id }
     if (idx >= 0 && currentList.size > 1) {
@@ -322,7 +414,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     attemptedFailoverIds.add(failedChannel.id)
     if (attemptedFailoverIds.size >= MAX_FAILOVER_ATTEMPTS) return false
 
-    val scopedList = uiState.value.filteredChannels.ifEmpty { _channels.value }
+    val scopedList = uiState.value.filteredChannels.ifEmpty { ageSafeAllChannels() }
     val excluded = attemptedFailoverIds + _brokenChannelIds.value
     val backup = findBackupChannel(scopedList, failedChannel, excluded) ?: return false
     attemptedFailoverIds.add(backup.id)
@@ -332,7 +424,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun zapNext() {
-    val list = uiState.value.filteredChannels.ifEmpty { _channels.value }
+    val list = uiState.value.filteredChannels.ifEmpty { ageSafeAllChannels() }
     if (list.isEmpty()) return
     val broken = _brokenChannelIds.value
     val activeId = _activeChannelId.value
@@ -356,7 +448,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun zapPrevious() {
-    val list = uiState.value.filteredChannels.ifEmpty { _channels.value }
+    val list = uiState.value.filteredChannels.ifEmpty { ageSafeAllChannels() }
     if (list.isEmpty()) return
     val broken = _brokenChannelIds.value
     val activeId = _activeChannelId.value
@@ -409,7 +501,55 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun setCategory(category: ChannelCategory) {
+    if (category == ChannelCategory.ADULT && !_isAdultUnlocked.value) {
+      switchCategoryToAdultOnConfirm = true
+      _pendingAdultPrompt.value = true
+      return
+    }
     _selectedCategory.value = category
+  }
+
+  fun setCountryFilter(country: String?) {
+    _selectedCountry.value = country
+  }
+
+  fun setLanguageFilter(language: String?) {
+    _selectedLanguage.value = language
+  }
+
+  fun requestUnlockAdult() {
+    switchCategoryToAdultOnConfirm = false
+    _pendingAdultPrompt.value = true
+  }
+
+  fun confirmUnlockAdult() {
+    _isAdultUnlocked.value = true
+    _pendingAdultPrompt.value = false
+    if (switchCategoryToAdultOnConfirm) {
+      _selectedCategory.value = ChannelCategory.ADULT
+      switchCategoryToAdultOnConfirm = false
+    }
+    _feedbackBanner.value = "Catégorie +18 déverrouillée"
+  }
+
+  fun lockAdultContent() {
+    _isAdultUnlocked.value = false
+    _pendingAdultPrompt.value = false
+    switchCategoryToAdultOnConfirm = false
+    if (_selectedCategory.value == ChannelCategory.ADULT) {
+      _selectedCategory.value = ChannelCategory.ALL
+    }
+    val currentActive = _channels.value.firstOrNull { it.id == _activeChannelId.value }
+    if (currentActive?.category == ChannelCategory.ADULT) {
+      playerManager.pause()
+      _activeChannelId.value = null
+    }
+    _feedbackBanner.value = "Contenu +18 masqué"
+  }
+
+  fun dismissAdultPrompt() {
+    _pendingAdultPrompt.value = false
+    switchCategoryToAdultOnConfirm = false
   }
 
   fun setSearchQuery(query: String) {
@@ -442,10 +582,13 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         val number = _dialedChannelInput.value?.toIntOrNull()
         _dialedChannelInput.value = null
         if (number != null && number > 0) {
-          val list = uiState.value.filteredChannels.ifEmpty { _channels.value }
+          val safeAll =
+            if (_isAdultUnlocked.value) _channels.value
+            else _channels.value.filter { it.category != ChannelCategory.ADULT }
+          val list = uiState.value.filteredChannels.ifEmpty { safeAll }
           val match =
             list.firstOrNull { it.number == number }
-              ?: _channels.value.firstOrNull { it.number == number }
+              ?: safeAll.firstOrNull { it.number == number }
               ?: list.getOrNull(number - 1)
           if (match != null) {
             selectChannel(match)
@@ -465,7 +608,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   fun cycleSortMode() {
     val next =
       when (_sortMode.value) {
-        ChannelSortMode.CATEGORY -> ChannelSortMode.ALPHABETICAL
+        ChannelSortMode.CATEGORY -> ChannelSortMode.COUNTRY
+        ChannelSortMode.COUNTRY -> ChannelSortMode.LANGUAGE
+        ChannelSortMode.LANGUAGE -> ChannelSortMode.ALPHABETICAL
         ChannelSortMode.ALPHABETICAL -> ChannelSortMode.DEFAULT
         ChannelSortMode.DEFAULT -> ChannelSortMode.CATEGORY
       }
@@ -473,6 +618,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     _feedbackBanner.value =
       when (next) {
         ChannelSortMode.CATEGORY -> "Classement : Par catégorie"
+        ChannelSortMode.COUNTRY -> "Classement : Par pays"
+        ChannelSortMode.LANGUAGE -> "Classement : Par langue"
         ChannelSortMode.ALPHABETICAL -> "Classement : A → Z"
         ChannelSortMode.DEFAULT -> "Classement : Ordre d'origine"
       }
@@ -511,15 +658,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     val merged =
       withContext(Dispatchers.Default) {
-        val existing = _channels.value
-        val existingUrls = existing.map { it.streamUrl }.toHashSet()
-        val uniqueAdditions = mutableListOf<Channel>()
-        for (channel in remoteChannels) {
-          if (existingUrls.add(channel.streamUrl)) {
-            uniqueAdditions.add(channel)
-          }
-        }
-        (existing + uniqueAdditions).mapIndexed { index, ch -> ch.copy(number = index + 1) }
+        M3uParser.mergeEnrichedChannels(_channels.value, remoteChannels)
       }
 
     _channels.value = merged
@@ -563,7 +702,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess = { body ->
           val parsed =
             withContext(Dispatchers.Default) {
-              M3uParser.parse(body, sourceTag = matchedPreset?.countryTag)
+              M3uParser.parse(body, preset = matchedPreset)
             }
           _isImporting.value = false
           if (parsed.isEmpty()) {
@@ -588,6 +727,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
       _channels.value = defaultChannels
       _selectedCategory.value = ChannelCategory.ALL
+      _selectedCountry.value = null
+      _selectedLanguage.value = null
       _searchQuery.value = ""
       _isImportDialogOpen.value = false
       _importError.value = null
@@ -608,21 +749,15 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   private fun applyImportedChannels(parsed: List<Channel>, mergeWithCurrent: Boolean) {
     val finalChannels =
       if (mergeWithCurrent) {
-        val existing = _channels.value
-        val existingUrls = existing.map { it.streamUrl }.toHashSet()
-        val additions = mutableListOf<Channel>()
-        for (ch in parsed) {
-          if (existingUrls.add(ch.streamUrl)) {
-            additions.add(ch)
-          }
-        }
-        (existing + additions).mapIndexed { index, ch -> ch.copy(number = index + 1) }
+        M3uParser.mergeEnrichedChannels(_channels.value, parsed)
       } else {
         parsed
       }
 
     _channels.value = finalChannels
     _selectedCategory.value = ChannelCategory.ALL
+    _selectedCountry.value = null
+    _selectedLanguage.value = null
     _searchQuery.value = ""
     _isImportDialogOpen.value = false
     _importError.value = null
@@ -630,7 +765,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     viewModelScope.launch { repository.saveCustomPlaylistM3u(serializeToM3u(finalChannels)) }
     if (!mergeWithCurrent || _activeChannelId.value == null) {
-      finalChannels.firstOrNull()?.let { selectChannel(it) }
+      finalChannels.firstOrNull { _isAdultUnlocked.value || it.category != ChannelCategory.ADULT }
+        ?.let { selectChannel(it) }
     }
   }
 
@@ -638,9 +774,13 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     buildString {
       appendLine("#EXTM3U")
       channels.forEach { ch ->
-        val logoAttr = ch.tvgLogo?.let { " tvg-logo=\"$it\"" }.orEmpty()
-        val groupAttr = ch.groupTitle?.let { " group-title=\"$it\"" }.orEmpty()
-        appendLine("#EXTINF:-1 tvg-id=\"${ch.tvgId}\"$logoAttr$groupAttr,${ch.name}")
+        val safeId = ch.tvgId.replace("\"", "'")
+        val logoAttr = ch.tvgLogo?.let { " tvg-logo=\"${it.replace("\"", "'")}\"" }.orEmpty()
+        val groupAttr = ch.groupTitle?.let { " group-title=\"${it.replace("\"", "'")}\"" }.orEmpty()
+        val countryAttr = " tvg-country=\"${ch.country.replace("\"", "'")}\""
+        val languageAttr = " tvg-language=\"${ch.language.replace("\"", "'")}\""
+        val categoryAttr = " x-category=\"${ch.category.name}\""
+        appendLine("#EXTINF:-1 tvg-id=\"$safeId\"$logoAttr$groupAttr$countryAttr$languageAttr$categoryAttr,${ch.name}")
         ch.userAgent?.let { appendLine("#EXTVLCOPT:http-user-agent=$it") }
         ch.referrer?.let { appendLine("#EXTVLCOPT:http-referrer=$it") }
         appendLine(ch.streamUrl)
@@ -661,12 +801,16 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
       when (category) {
         ChannelCategory.GENERAL -> 0
         ChannelCategory.NEWS -> 1
-        ChannelCategory.MOVIES -> 2
-        ChannelCategory.SPORTS -> 3
-        ChannelCategory.KIDS -> 4
-        ChannelCategory.DOCUMENTARY -> 5
-        ChannelCategory.MUSIC -> 6
-        else -> 7
+        ChannelCategory.SPORTS -> 2
+        ChannelCategory.MOVIES -> 3
+        ChannelCategory.COMEDY -> 4
+        ChannelCategory.ENTERTAINMENT -> 5
+        ChannelCategory.KIDS -> 6
+        ChannelCategory.DOCUMENTARY -> 7
+        ChannelCategory.MUSIC -> 8
+        ChannelCategory.RELIGIOUS -> 9
+        ChannelCategory.ADULT -> 10
+        else -> 11
       }
 
     internal fun normalizeChannelKey(title: String): String =

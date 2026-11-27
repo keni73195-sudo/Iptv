@@ -25,7 +25,7 @@ class PlaylistRepository(
     const val FAVORITE_IDS = "favorite_channel_ids"
     const val LAST_CHANNEL_ID = "last_channel_id"
     const val RECENT_CHANNEL_IDS = "recent_channel_ids"
-    const val AUTO_SYNCED_REMOTE = "auto_synced_remote_sources_v3"
+    const val AUTO_SYNCED_REMOTE = "auto_synced_remote_sources_v4"
     const val MAX_RECENT_CHANNELS = 12
   }
 
@@ -127,9 +127,9 @@ class PlaylistRepository(
           val connection =
             (URL(currentUrl).openConnection() as HttpURLConnection).apply {
               connectTimeout = 15_000
-              readTimeout = 30_000
+              readTimeout = 45_000
               instanceFollowRedirects = true
-              setRequestProperty("User-Agent", "OndeTV-Android/1.0")
+              setRequestProperty("User-Agent", "RifiStream-Android/1.0")
               setRequestProperty("Connection", "close")
             }
           try {
@@ -162,19 +162,24 @@ class PlaylistRepository(
           .map { source ->
             async(Dispatchers.IO) {
               fetchRemoteM3u(source.url).map { body ->
-                M3uParser.parse(body, sourceTag = source.countryTag)
+                M3uParser.parse(body, preset = source)
               }
             }
           }
           .awaitAll()
 
       var successCount = 0
-      val merged = mutableListOf<Channel>()
+      var merged = emptyList<Channel>()
       results.forEach { res ->
         res.onSuccess { channels ->
           if (channels.isNotEmpty()) {
             successCount++
-            merged.addAll(channels)
+            merged =
+              if (merged.isEmpty()) {
+                channels
+              } else {
+                M3uParser.mergeEnrichedChannels(merged, channels)
+              }
           }
         }
       }

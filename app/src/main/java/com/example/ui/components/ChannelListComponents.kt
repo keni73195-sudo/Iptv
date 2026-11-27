@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -33,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -41,7 +44,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -74,9 +79,12 @@ import com.example.model.PlaybackStatus
 import com.example.ui.theme.AmberFavorite
 import com.example.ui.theme.BorderSlate
 import com.example.ui.theme.ControlSurface
+import com.example.ui.theme.CrimsonLive
+import com.example.ui.theme.CyanBroadcast
 import com.example.ui.theme.ElevatedCard
 import com.example.ui.theme.EmeraldReady
 import com.example.ui.theme.InkMuted
+import com.example.ui.theme.InkPrimary
 import com.example.ui.theme.InkSecondary
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.OrangeAccent
@@ -481,10 +489,16 @@ private fun HeaderRightActions(
 @Composable
 fun CategoryFilterRow(
   selectedCategory: ChannelCategory,
+  selectedCountry: String?,
+  selectedLanguage: String?,
+  isAdultUnlocked: Boolean,
   hideBrokenChannels: Boolean,
   sortMode: ChannelSortMode,
   brokenCount: Int,
   onCategorySelect: (ChannelCategory) -> Unit,
+  onOpenCountryPicker: () -> Unit,
+  onOpenLanguagePicker: () -> Unit,
+  onLockAdult: () -> Unit,
   onToggleHideBroken: () -> Unit,
   onCycleSortMode: () -> Unit,
   modifier: Modifier = Modifier,
@@ -495,11 +509,15 @@ fun CategoryFilterRow(
       ChannelCategory.FAVORITES,
       ChannelCategory.GENERAL,
       ChannelCategory.NEWS,
-      ChannelCategory.MOVIES,
       ChannelCategory.SPORTS,
+      ChannelCategory.MOVIES,
+      ChannelCategory.COMEDY,
+      ChannelCategory.ENTERTAINMENT,
       ChannelCategory.KIDS,
       ChannelCategory.DOCUMENTARY,
       ChannelCategory.MUSIC,
+      ChannelCategory.RELIGIOUS,
+      ChannelCategory.ADULT,
     )
 
   LazyRow(
@@ -563,6 +581,8 @@ fun CategoryFilterRow(
       val sortLabel =
         when (sortMode) {
           ChannelSortMode.CATEGORY -> "Tri : Catégorie"
+          ChannelSortMode.COUNTRY -> "Tri : Pays"
+          ChannelSortMode.LANGUAGE -> "Tri : Langue"
           ChannelSortMode.ALPHABETICAL -> "Tri : A–Z"
           ChannelSortMode.DEFAULT -> "Tri : Défaut"
         }
@@ -601,7 +621,123 @@ fun CategoryFilterRow(
       }
     }
 
-    // 3. Category Filter Pills
+    // 3. Country Filter Pill
+    item(key = "country_filter") {
+      var isFocused by remember { mutableStateOf(false) }
+      val active = selectedCountry != null
+      Surface(
+        color = if (active) OrangeAccent.copy(alpha = 0.22f) else Color(0xFF1A2030),
+        shape = RoundedCornerShape(999.dp),
+        border =
+          BorderStroke(
+            width = if (isFocused) 1.5.dp else 1.dp,
+            color =
+              when {
+                isFocused -> Color.White
+                active -> OrangeAccent
+                else -> Color(0xFF334155)
+              },
+          ),
+        modifier =
+          Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .onFocusChanged { isFocused = it.isFocused }
+            .clickable(onClick = onOpenCountryPicker)
+            .testTag("country_filter_button"),
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Icon(
+            painter = painterResource(R.drawable.ic_public),
+            contentDescription = null,
+            tint = if (active) OrangeAccent else Color(0xFF9CA3AF),
+            modifier = Modifier.size(15.dp),
+          )
+          Spacer(modifier = Modifier.width(6.dp))
+          Text(
+            text = if (selectedCountry != null) "Pays : $selectedCountry" else "Pays : Tous",
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = if (active) Color.White else Color(0xFFCBD5E1),
+          )
+        }
+      }
+    }
+
+    // 4. Language Filter Pill
+    item(key = "language_filter") {
+      var isFocused by remember { mutableStateOf(false) }
+      val active = selectedLanguage != null
+      Surface(
+        color = if (active) OrangeAccent.copy(alpha = 0.22f) else Color(0xFF1A2030),
+        shape = RoundedCornerShape(999.dp),
+        border =
+          BorderStroke(
+            width = if (isFocused) 1.5.dp else 1.dp,
+            color =
+              when {
+                isFocused -> Color.White
+                active -> OrangeAccent
+                else -> Color(0xFF334155)
+              },
+          ),
+        modifier =
+          Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .onFocusChanged { isFocused = it.isFocused }
+            .clickable(onClick = onOpenLanguagePicker)
+            .testTag("language_filter_button"),
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Icon(
+            painter = painterResource(R.drawable.ic_public),
+            contentDescription = null,
+            tint = if (active) OrangeAccent else Color(0xFF9CA3AF),
+            modifier = Modifier.size(15.dp),
+          )
+          Spacer(modifier = Modifier.width(6.dp))
+          Text(
+            text = if (selectedLanguage != null) "Langue : $selectedLanguage" else "Langue : Toutes",
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = if (active) Color.White else Color(0xFFCBD5E1),
+          )
+        }
+      }
+    }
+
+    if (isAdultUnlocked) {
+      item(key = "lock_adult") {
+        var isFocused by remember { mutableStateOf(false) }
+        Surface(
+          color = Color(0xFF2D1622),
+          shape = RoundedCornerShape(999.dp),
+          border =
+            BorderStroke(
+              width = if (isFocused) 1.5.dp else 1.dp,
+              color = if (isFocused) Color.White else Color(0xFFEF4444).copy(alpha = 0.6f),
+            ),
+          modifier =
+            Modifier
+              .clip(RoundedCornerShape(999.dp))
+              .onFocusChanged { isFocused = it.isFocused }
+              .clickable(onClick = onLockAdult)
+              .testTag("lock_adult_button"),
+        ) {
+          Text(
+            text = stringResource(R.string.adult_lock_label),
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = Color(0xFFFCA5A5),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+          )
+        }
+      }
+    }
+
+    // 5. Category Filter Pills
     items(categories) { category ->
       val isSelected = category == selectedCategory
       var isChipFocused by remember { mutableStateOf(false) }
@@ -609,14 +745,9 @@ fun CategoryFilterRow(
       val label =
         when (category) {
           ChannelCategory.FAVORITES -> "★ Mes chaînes"
-          ChannelCategory.ALL -> "Toutes"
           ChannelCategory.GENERAL -> "Général"
-          ChannelCategory.MOVIES -> "Cinéma"
-          ChannelCategory.NEWS -> "Info"
-          ChannelCategory.KIDS -> "Jeunesse"
-          ChannelCategory.MUSIC -> "Musique"
-          ChannelCategory.SPORTS -> "Sport"
-          ChannelCategory.DOCUMENTARY -> "Docs"
+          ChannelCategory.ADULT -> if (isAdultUnlocked) "+18 Adultes" else "🔒 +18 Adultes"
+          else -> categoryLabel(category)
         }
 
       Surface(
@@ -650,7 +781,12 @@ fun CategoryFilterRow(
             MaterialTheme.typography.bodyMedium.copy(
               fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
             ),
-          color = if (isSelected) Color.White else Color(0xFF9CA3AF),
+          color =
+            when {
+              category == ChannelCategory.ADULT && !isSelected -> Color(0xFFFCA5A5)
+              isSelected -> Color.White
+              else -> Color(0xFF9CA3AF)
+            },
           modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
         )
       }
@@ -751,8 +887,20 @@ fun ChannelRowCard(
         }
 
         val categoryName = categoryLabel(channel.category)
+        val subtitle =
+          buildString {
+            append(categoryName)
+            if (channel.country != "International") {
+              append(" • ")
+              append(channel.country)
+            }
+            if (channel.language != "Autre") {
+              append(" • ")
+              append(channel.language)
+            }
+          }
         Text(
-          text = categoryName,
+          text = subtitle,
           style = MaterialTheme.typography.labelSmall,
           color = subColor,
           maxLines = 1,
@@ -1306,8 +1454,233 @@ fun categoryLabel(category: ChannelCategory): String =
     ChannelCategory.NEWS -> stringResource(R.string.filter_news)
     ChannelCategory.SPORTS -> stringResource(R.string.filter_sports)
     ChannelCategory.MOVIES -> stringResource(R.string.filter_movies)
+    ChannelCategory.COMEDY -> stringResource(R.string.filter_comedy)
+    ChannelCategory.ENTERTAINMENT -> stringResource(R.string.filter_entertainment)
     ChannelCategory.KIDS -> stringResource(R.string.filter_kids)
     ChannelCategory.DOCUMENTARY -> stringResource(R.string.filter_documentary)
     ChannelCategory.MUSIC -> stringResource(R.string.filter_music)
+    ChannelCategory.RELIGIOUS -> stringResource(R.string.filter_religious)
     ChannelCategory.GENERAL -> stringResource(R.string.filter_general)
+    ChannelCategory.ADULT -> stringResource(R.string.filter_adult)
   }
+
+@Composable
+fun CountryLanguagePickerDialog(
+  title: String,
+  allOptionLabel: String,
+  selectedValue: String?,
+  options: List<Pair<String, Int>>,
+  onSelect: (String?) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  var search by remember { mutableStateOf("") }
+  val filteredOptions =
+    remember(options, search) {
+      val q = search.trim()
+      if (q.isEmpty()) options
+      else options.filter { it.first.contains(q, ignoreCase = true) }
+    }
+
+  Dialog(onDismissRequest = onDismiss) {
+    Surface(
+      color = ControlSurface,
+      shape = RoundedCornerShape(18.dp),
+      border = BorderStroke(1.dp, BorderSlate),
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      Column(modifier = Modifier.padding(18.dp)) {
+        Text(
+          text = title,
+          style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+          color = InkPrimary,
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Surface(
+          color = ElevatedCard,
+          shape = RoundedCornerShape(10.dp),
+          border = BorderStroke(1.dp, BorderSlate),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Icon(
+              imageVector = Icons.Rounded.Search,
+              contentDescription = null,
+              tint = InkSecondary,
+              modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+              if (search.isEmpty()) {
+                Text(
+                  text = stringResource(R.string.picker_search_hint),
+                  style = MaterialTheme.typography.bodyMedium,
+                  color = InkMuted,
+                )
+              }
+              BasicTextField(
+                value = search,
+                onValueChange = { search = it },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                cursorBrush = SolidColor(OrangeAccent),
+                modifier = Modifier.fillMaxWidth().testTag("picker_search_input"),
+              )
+            }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        LazyColumn(
+          modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          if (search.isBlank()) {
+            item(key = "all_option") {
+              PickerOptionRow(
+                label = allOptionLabel,
+                count = options.sumOf { it.second },
+                isSelected = selectedValue == null,
+                onClick = {
+                  onSelect(null)
+                  onDismiss()
+                },
+              )
+            }
+          }
+          items(filteredOptions, key = { it.first }) { (name, count) ->
+            PickerOptionRow(
+              label = name,
+              count = count,
+              isSelected = selectedValue.equals(name, ignoreCase = true),
+              onClick = {
+                onSelect(name)
+                onDismiss()
+              },
+            )
+          }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.End,
+        ) {
+          TextButton(onClick = onDismiss) {
+            Text(text = stringResource(R.string.cancel), color = InkSecondary)
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun PickerOptionRow(
+  label: String,
+  count: Int,
+  isSelected: Boolean,
+  onClick: () -> Unit,
+) {
+  var isFocused by remember { mutableStateOf(false) }
+  Surface(
+    color =
+      when {
+        isSelected -> OrangeAccent.copy(alpha = 0.22f)
+        isFocused -> Color(0xFF242B3D)
+        else -> ElevatedCard
+      },
+    shape = RoundedCornerShape(10.dp),
+    border =
+      BorderStroke(
+        width = if (isFocused) 2.dp else 1.dp,
+        color =
+          when {
+            isFocused -> OrangeAccent
+            isSelected -> OrangeAccent.copy(alpha = 0.8f)
+            else -> BorderSlate
+          },
+      ),
+    modifier =
+      Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(10.dp))
+        .onFocusChanged { isFocused = it.isFocused }
+        .clickable(onClick = onClick),
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+      Text(
+        text = label,
+        style =
+          MaterialTheme.typography.bodyMedium.copy(
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+          ),
+        color = Color.White,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.weight(1f),
+      )
+      Spacer(modifier = Modifier.width(8.dp))
+      Text(
+        text = count.toString(),
+        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+        color = if (isSelected) OrangeAccent else InkMuted,
+      )
+    }
+  }
+}
+
+@Composable
+fun AdultConfirmationDialog(
+  onConfirm: () -> Unit,
+  onDismiss: () -> Unit,
+) {
+  Dialog(onDismissRequest = onDismiss) {
+    Surface(
+      color = ControlSurface,
+      shape = RoundedCornerShape(18.dp),
+      border = BorderStroke(1.dp, CrimsonLive.copy(alpha = 0.6f)),
+      modifier = Modifier.fillMaxWidth().testTag("adult_confirmation_dialog"),
+    ) {
+      Column(modifier = Modifier.padding(20.dp)) {
+        Text(
+          text = stringResource(R.string.adult_dialog_title),
+          style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+          color = InkPrimary,
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        Text(
+          text = stringResource(R.string.adult_dialog_body),
+          style = MaterialTheme.typography.bodyMedium,
+          color = InkSecondary,
+        )
+        Spacer(modifier = Modifier.height(18.dp))
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.End,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          TextButton(onClick = onDismiss) {
+            Text(text = stringResource(R.string.cancel), color = InkSecondary)
+          }
+          Spacer(modifier = Modifier.width(8.dp))
+          Button(
+            onClick = onConfirm,
+            colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent, contentColor = Color.White),
+            modifier = Modifier.testTag("confirm_adult_button"),
+          ) {
+            Text(text = stringResource(R.string.adult_dialog_confirm))
+          }
+        }
+      }
+    }
+  }
+}

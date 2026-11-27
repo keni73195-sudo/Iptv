@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -48,8 +50,15 @@ import com.example.R
 import com.example.model.Channel
 import com.example.model.ChannelCategory
 import com.example.model.ChannelSortMode
+import com.example.model.GlobalGroupMode
 import com.example.ui.theme.AmberFavorite
 import com.example.ui.theme.OrangeAccent
+
+private data class CatalogSection(
+  val key: String,
+  val title: String,
+  val channels: List<Channel>,
+)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -60,48 +69,118 @@ fun GlobalCatalogView(
   brokenChannelIds: Set<String>,
   hideBrokenChannels: Boolean,
   sortMode: ChannelSortMode,
+  isAdultUnlocked: Boolean,
   activeChannelId: String?,
   isPlaying: Boolean,
   onSelectChannel: (Channel) -> Unit,
   onToggleFavorite: (String) -> Unit,
   onToggleHideBroken: () -> Unit,
   onCycleSortMode: () -> Unit,
+  onRequestUnlockAdult: () -> Unit,
+  onLockAdult: () -> Unit,
   onClearRecent: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  var groupMode by remember { mutableStateOf(GlobalGroupMode.CATEGORY) }
+
   val categoryOrder =
-    listOf(
-      ChannelCategory.GENERAL,
-      ChannelCategory.NEWS,
-      ChannelCategory.MOVIES,
-      ChannelCategory.SPORTS,
-      ChannelCategory.KIDS,
-      ChannelCategory.DOCUMENTARY,
-      ChannelCategory.MUSIC,
-    )
+    remember(isAdultUnlocked) {
+      buildList {
+        add(ChannelCategory.GENERAL)
+        add(ChannelCategory.NEWS)
+        add(ChannelCategory.SPORTS)
+        add(ChannelCategory.MOVIES)
+        add(ChannelCategory.COMEDY)
+        add(ChannelCategory.ENTERTAINMENT)
+        add(ChannelCategory.KIDS)
+        add(ChannelCategory.DOCUMENTARY)
+        add(ChannelCategory.MUSIC)
+        add(ChannelCategory.RELIGIOUS)
+        if (isAdultUnlocked) add(ChannelCategory.ADULT)
+      }
+    }
 
-  val groupedChannels =
-    remember(channels, brokenChannelIds, hideBrokenChannels, sortMode) {
+  val categoryNames =
+    categoryOrder.associateWith { cat -> categoryLabel(cat) }
+
+  val sections =
+    remember(channels, brokenChannelIds, hideBrokenChannels, sortMode, groupMode, isAdultUnlocked, categoryNames) {
+      val ageSafe =
+        if (isAdultUnlocked) channels
+        else channels.filter { it.category != ChannelCategory.ADULT }
       val visible =
-        if (hideBrokenChannels) {
-          channels.filter { it.id !in brokenChannelIds }
-        } else {
-          channels
-        }
+        if (hideBrokenChannels) ageSafe.filter { it.id !in brokenChannelIds } else ageSafe
 
-      categoryOrder.mapNotNull { cat ->
-        val items = visible.filter { it.category == cat }
-        if (items.isEmpty()) {
-          null
-        } else {
-          val sortedItems =
-            when (sortMode) {
-              ChannelSortMode.ALPHABETICAL -> items.sortedBy { it.displayTitle.lowercase() }
-              ChannelSortMode.CATEGORY -> items.sortedBy { it.displayTitle.lowercase() }
-              ChannelSortMode.DEFAULT -> items
+      fun sortSectionChannels(items: List<Channel>): List<Channel> {
+        val sorted =
+          when (sortMode) {
+            ChannelSortMode.ALPHABETICAL -> items.sortedBy { it.displayTitle.lowercase() }
+            ChannelSortMode.COUNTRY ->
+              items.sortedWith(
+                compareBy<Channel> { if (it.country == "International") 1 else 0 }
+                  .thenBy { it.country.lowercase() }
+                  .thenBy { it.displayTitle.lowercase() }
+              )
+            ChannelSortMode.LANGUAGE ->
+              items.sortedWith(
+                compareBy<Channel> { if (it.language == "Autre") 1 else 0 }
+                  .thenBy { it.language.lowercase() }
+                  .thenBy { it.displayTitle.lowercase() }
+              )
+            ChannelSortMode.CATEGORY -> items.sortedBy { it.displayTitle.lowercase() }
+            ChannelSortMode.DEFAULT -> items
+          }
+        val (working, broken) = sorted.partition { it.id !in brokenChannelIds }
+        return working + broken
+      }
+
+      when (groupMode) {
+        GlobalGroupMode.CATEGORY -> {
+          categoryOrder.mapNotNull { cat ->
+            val items = visible.filter { it.category == cat }
+            if (items.isEmpty()) null
+            else {
+              CatalogSection(
+                key = "cat_${cat.name}",
+                title = categoryNames[cat] ?: cat.name,
+                channels = sortSectionChannels(items),
+              )
             }
-          val (working, broken) = sortedItems.partition { it.id !in brokenChannelIds }
-          cat to (working + broken)
+          }
+        }
+        GlobalGroupMode.COUNTRY -> {
+          visible
+            .groupBy { it.country }
+            .entries
+            .sortedWith(
+              compareBy<Map.Entry<String, List<Channel>>> { if (it.key == "International") 1 else 0 }
+                .thenByDescending { it.value.size }
+                .thenBy { it.key.lowercase() }
+            )
+            .map { (country, items) ->
+              CatalogSection(
+                key = "country_$country",
+                title = country,
+                channels = sortSectionChannels(items),
+              )
+            }
+        }
+        GlobalGroupMode.LANGUAGE -> {
+          visible
+            .groupBy { it.language }
+            .entries
+            .sortedWith(
+              compareBy<Map.Entry<String, List<Channel>>> { if (it.key == "Autre") 1 else 0 }
+                .thenByDescending { it.value.size }
+                .thenBy { it.key.lowercase() }
+            )
+            .map { (language, items) ->
+              CatalogSection(
+                key = "lang_$language",
+                title = language,
+                channels = sortSectionChannels(items),
+              )
+            }
         }
       }
     }
@@ -117,7 +196,7 @@ fun GlobalCatalogView(
     contentPadding = PaddingValues(vertical = 12.dp, horizontal = 14.dp),
     verticalArrangement = Arrangement.spacedBy(16.dp),
   ) {
-    // Global Summary & Quick Controls Header
+    // Global Summary & Grouping/Filter Controls Header
     item(key = "global_summary_header") {
       Surface(
         color = Color(0xFF131722),
@@ -139,7 +218,7 @@ fun GlobalCatalogView(
               )
               Spacer(modifier = Modifier.height(2.dp))
               Text(
-                text = "$workingCount chaînes actives • ${brokenChannelIds.size} hors service",
+                text = "$workingCount chaînes actives • ${sections.size} sections • ${brokenChannelIds.size} hors service",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF94A3B8),
               )
@@ -148,7 +227,54 @@ fun GlobalCatalogView(
 
           Spacer(modifier = Modifier.height(10.dp))
 
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          // Grouping mode selector: Par Catégorie / Par Pays / Par Langue
+          Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            listOf(
+              GlobalGroupMode.CATEGORY to stringResource(R.string.global_group_category),
+              GlobalGroupMode.COUNTRY to stringResource(R.string.global_group_country),
+              GlobalGroupMode.LANGUAGE to stringResource(R.string.global_group_language),
+            ).forEach { (mode, label) ->
+              val isSelected = groupMode == mode
+              var isFocused by remember { mutableStateOf(false) }
+              Surface(
+                color = if (isSelected) OrangeAccent else Color(0xFF1E2638),
+                shape = RoundedCornerShape(999.dp),
+                border =
+                  BorderStroke(
+                    width = if (isFocused) 2.dp else 1.dp,
+                    color =
+                      when {
+                        isFocused -> Color.White
+                        isSelected -> OrangeAccent
+                        else -> Color(0xFF334155)
+                      },
+                  ),
+                modifier =
+                  Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .onFocusChanged { isFocused = it.isFocused }
+                    .clickable { groupMode = mode }
+                    .testTag("global_group_${mode.name.lowercase()}"),
+              ) {
+                Text(
+                  text = label,
+                  style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                  color = Color.White,
+                  modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                )
+              }
+            }
+          }
+
+          Spacer(modifier = Modifier.height(8.dp))
+
+          Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
             var isHideFocused by remember { mutableStateOf(false) }
             Surface(
               color = if (hideBrokenChannels) OrangeAccent.copy(alpha = 0.22f) else Color(0xFF1E2638),
@@ -220,6 +346,8 @@ fun GlobalCatalogView(
                   text =
                     when (sortMode) {
                       ChannelSortMode.CATEGORY -> "Tri : Catégorie"
+                      ChannelSortMode.COUNTRY -> "Tri : Pays"
+                      ChannelSortMode.LANGUAGE -> "Tri : Langue"
                       ChannelSortMode.ALPHABETICAL -> "Tri : A–Z"
                       ChannelSortMode.DEFAULT -> "Tri : Défaut"
                     },
@@ -227,6 +355,37 @@ fun GlobalCatalogView(
                   color = Color.White,
                 )
               }
+            }
+
+            var isAdultFocused by remember { mutableStateOf(false) }
+            Surface(
+              color = if (isAdultUnlocked) Color(0xFF2D1622) else Color(0xFF1E2638),
+              shape = RoundedCornerShape(999.dp),
+              border =
+                BorderStroke(
+                  width = if (isAdultFocused) 2.dp else 1.dp,
+                  color =
+                    when {
+                      isAdultFocused -> Color.White
+                      isAdultUnlocked -> Color(0xFFEF4444).copy(alpha = 0.7f)
+                      else -> Color(0xFF334155)
+                    },
+                ),
+              modifier =
+                Modifier
+                  .clip(RoundedCornerShape(999.dp))
+                  .onFocusChanged { isAdultFocused = it.isFocused }
+                  .clickable { if (isAdultUnlocked) onLockAdult() else onRequestUnlockAdult() }
+                  .testTag("global_adult_toggle_button"),
+            ) {
+              Text(
+                text =
+                  if (isAdultUnlocked) stringResource(R.string.adult_lock_label)
+                  else "🔒 ${stringResource(R.string.adult_unlock_label)}",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = if (isAdultUnlocked) Color(0xFFFCA5A5) else Color(0xFFCBD5E1),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+              )
             }
           }
         }
@@ -250,8 +409,8 @@ fun GlobalCatalogView(
       }
     }
 
-    // Categorized Sections
-    items(groupedChannels, key = { it.first.name }) { (category, catChannels) ->
+    // Grouped Sections (by Category, Country, or Language)
+    items(sections, key = { it.key }) { section ->
       Column(modifier = Modifier.fillMaxWidth()) {
         Row(
           modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -259,7 +418,7 @@ fun GlobalCatalogView(
           horizontalArrangement = Arrangement.SpaceBetween,
         ) {
           Text(
-            text = categoryLabel(category),
+            text = section.title,
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             color = Color.White,
           )
@@ -268,7 +427,7 @@ fun GlobalCatalogView(
             shape = RoundedCornerShape(999.dp),
           ) {
             Text(
-              text = "${catChannels.size}",
+              text = "${section.channels.size}",
               style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
               color = OrangeAccent,
               modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
@@ -279,7 +438,7 @@ fun GlobalCatalogView(
         LazyRow(
           horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-          items(catChannels, key = { "${category.name}_${it.id}" }) { channel ->
+          items(section.channels, key = { "${section.key}_${it.id}" }) { channel ->
             val isBroken = channel.id in brokenChannelIds
             val isSelected = channel.id == activeChannelId
             val isFav = channel.id in favoriteIds
@@ -301,7 +460,7 @@ fun GlobalCatalogView(
                 ),
               modifier =
                 Modifier
-                  .width(156.dp)
+                  .width(164.dp)
                   .clip(RoundedCornerShape(14.dp))
                   .onFocusChanged { isCardFocused = it.isFocused }
                   .combinedClickable(
@@ -355,10 +514,21 @@ fun GlobalCatalogView(
 
                 Spacer(modifier = Modifier.height(2.dp))
 
+                val metaText =
+                  when {
+                    isBroken -> stringResource(R.string.channel_offline_badge)
+                    groupMode == GlobalGroupMode.COUNTRY -> "${channel.language} • CH ${channel.number}"
+                    groupMode == GlobalGroupMode.LANGUAGE -> "${channel.country} • CH ${channel.number}"
+                    channel.country != "International" -> "${channel.country} • ${channel.language}"
+                    else -> "CH ${channel.number}"
+                  }
+
                 Text(
-                  text = if (isBroken) stringResource(R.string.channel_offline_badge) else "CH ${channel.number}",
+                  text = metaText,
                   style = MaterialTheme.typography.labelSmall,
                   color = if (isBroken) Color(0xFFEF4444) else if (isSelected || isCardFocused) Color(0xFF4B5563) else Color(0xFF8A93A6),
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
                 )
               }
             }
