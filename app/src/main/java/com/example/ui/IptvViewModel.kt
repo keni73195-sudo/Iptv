@@ -29,6 +29,7 @@ data class IptvUiState(
   val selectedCategory: ChannelCategory = ChannelCategory.ALL,
   val searchQuery: String = "",
   val favoriteIds: Set<String> = emptySet(),
+  val brokenChannelIds: Set<String> = emptySet(),
   val playbackStatus: PlaybackStatus = PlaybackStatus.Idle,
   val isMuted: Boolean = false,
   val liveResolutionLabel: String? = null,
@@ -67,6 +68,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
   private val _channels = MutableStateFlow<List<Channel>>(M3uParser.parse(DefaultPlaylists.BFM_M3U))
   private val _activeChannelId = MutableStateFlow<String?>(null)
+  private val _brokenChannelIds = MutableStateFlow<Set<String>>(emptySet())
   private val _selectedCategory = MutableStateFlow(ChannelCategory.ALL)
   private val _searchQuery = MutableStateFlow("")
   private val _aspectRatioMode = MutableStateFlow(AspectRatioMode.FIT)
@@ -97,11 +99,14 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
       DialogAndSyncControls(open, importing, syncing, error, banner)
     }
 
+  private val channelTagsFlow =
+    combine(repository.favoriteChannelIds, _brokenChannelIds) { favs, broken -> favs to broken }
+
   val uiState: StateFlow<IptvUiState> =
     combine(
         _channels,
         _activeChannelId,
-        repository.favoriteChannelIds,
+        channelTagsFlow,
         combine(
           playerManager.playbackStatus,
           playerManager.isMuted,
@@ -110,8 +115,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
           Triple(status, muted, res)
         },
         combine(filterControlsFlow, dialogControlsFlow) { f, d -> f to d },
-      ) { channels, activeId, favoriteIds, playerInfo, controlsPair ->
+      ) { channels, activeId, channelTags, playerInfo, controlsPair ->
         val (filters, dialog) = controlsPair
+        val (favoriteIds, brokenIds) = channelTags
         val activeChannel =
           channels.firstOrNull { it.id == activeId } ?: channels.firstOrNull()
         val query = filters.searchQuery.trim()
@@ -132,13 +138,18 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             matchesCategory && matchesQuery
           }
 
+        // Automatic reordering: non-working / broken channels are moved to the bottom ("ira en bas")
+        val (workingChannels, brokenChannels) = filtered.partition { it.id !in brokenIds }
+        val orderedChannels = workingChannels + brokenChannels
+
         IptvUiState(
           allChannels = channels,
-          filteredChannels = filtered,
+          filteredChannels = orderedChannels,
           activeChannel = activeChannel,
           selectedCategory = filters.selectedCategory,
           searchQuery = filters.searchQuery,
           favoriteIds = favoriteIds,
+          brokenChannelIds = brokenIds,
           playbackStatus = playerInfo.first,
           isMuted = playerInfo.second,
           liveResolutionLabel = playerInfo.third,
@@ -164,6 +175,26 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
   init {
     playerManager.onStreamFailure = { failedChannel -> tryFailoverBackup(failedChannel) }
+
+    viewModelScope.launch {
+      playerManager.playbackStatus.collect { status ->
+        when (status) {
+          is PlaybackStatus.Playing -> {
+            _activeChannelId.value?.let { activeId ->
+              if (activeId in _brokenChannelIds.value) {
+                _brokenChannelIds.value = _brokenChannelIds.value - activeId
+              }
+            }
+          }
+          is PlaybackStatus.Error -> {
+            _activeChannelId.value?.let { activeId ->
+              _brokenChannelIds.value = _brokenChannelIds.value + activeId
+            }
+          }
+          else -> Unit
+        }
+      }
+    }
 
     viewModelScope.launch {
       val savedCustomM3u = repository.loadCustomPlaylistM3u()
@@ -193,12 +224,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
       }
 
       val lastId = repository.lastChannelId.first()
-      val defaultChannel =
-        initialChannels.firstOrNull { it.id == lastId }
-          ?: initialChannels.firstOrNull { it.displayTitle.equals("BFM TV", ignoreCase = true) }
-          ?: initialChannels.firstOrNull()
-
-      defaultChannel?.let { selectChannel(it) }
+      // Do not auto-play on startup. Let the user explicitly choose a channel.
 
       if (!alreadyAutoSynced) {
         syncRemoteSourcesInternal(closeDialogOnSuccess = false)
@@ -219,6 +245,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   private fun tryFailoverBackup(failedChannel: Channel): Boolean {
+    _brokenChannelIds.value = _brokenChannelIds.value + failedChannel.id
     attemptedFailoverIds.add(failedChannel.id)
     if (attemptedFailoverIds.size >= MAX_FAILOVER_ATTEMPTS) return false
 

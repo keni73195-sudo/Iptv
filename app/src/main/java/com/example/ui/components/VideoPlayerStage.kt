@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -68,6 +69,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -76,6 +78,7 @@ import androidx.media3.ui.PlayerView
 import com.example.R
 import com.example.model.AspectRatioMode
 import com.example.model.Channel
+import com.example.model.ChannelCategory
 import com.example.model.PlaybackStatus
 import com.example.ui.theme.AmberFavorite
 import com.example.ui.theme.BorderSlate
@@ -84,6 +87,8 @@ import com.example.ui.theme.CyanBroadcast
 import com.example.ui.theme.InkPrimary
 import com.example.ui.theme.InkSecondary
 import com.example.ui.theme.ObsidianBg
+import com.example.ui.theme.OrangeAccent
+import com.example.ui.theme.OrangeLive
 import kotlinx.coroutines.delay
 
 @OptIn(UnstableApi::class)
@@ -113,12 +118,10 @@ fun VideoPlayerStage(
   var interactionTick by remember { mutableIntStateOf(0) }
 
   LaunchedEffect(playbackStatus, interactionTick, activeChannel?.id, isMiniPreview) {
-    if (playbackStatus is PlaybackStatus.Playing && !isMiniPreview) {
+    if (playbackStatus is PlaybackStatus.Playing && !isMiniPreview && !isFullscreen) {
       controlsVisible = true
-      delay(3_500L)
+      delay(4_500L)
       controlsVisible = false
-    } else if (!isMiniPreview) {
-      controlsVisible = true
     } else {
       controlsVisible = true
     }
@@ -130,6 +133,19 @@ fun VideoPlayerStage(
       aspectRatioMode == AspectRatioMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
       aspectRatioMode == AspectRatioMode.FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
       else -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+    }
+
+  val programSubtitle =
+    remember(activeChannel?.id) {
+      when (activeChannel?.category) {
+        ChannelCategory.MOVIES -> "La Nuit des courts métrages"
+        ChannelCategory.NEWS -> "Édition spéciale en direct"
+        ChannelCategory.SPORTS -> "Direct Sport & Multiplex"
+        ChannelCategory.KIDS -> "Dessins animés & Aventures"
+        ChannelCategory.DOCUMENTARY -> "Grande soirée Découverte"
+        ChannelCategory.MUSIC -> "Live Session & Clips non-stop"
+        else -> "La Nuit des courts métrages"
+      }
     }
 
   Box(
@@ -199,6 +215,63 @@ fun VideoPlayerStage(
       modifier = Modifier.fillMaxSize(),
     )
 
+    // Startup or Idle state: prompt user to start channel
+    if (playbackStatus is PlaybackStatus.Idle && !isMiniPreview) {
+      Box(
+        modifier =
+          Modifier
+            .fillMaxSize()
+            .background(
+              Brush.radialGradient(
+                colors = listOf(Color(0xFF1E2838), Color(0xFF090D14)),
+                radius = 700f,
+              )
+            ),
+        contentAlignment = Alignment.Center,
+      ) {
+        Column(
+          horizontalAlignment = Alignment.CenterHorizontally,
+          modifier = Modifier.padding(20.dp),
+        ) {
+          Surface(
+            color = OrangeAccent,
+            shape = CircleShape,
+            modifier =
+              Modifier
+                .size(60.dp)
+                .clip(CircleShape)
+                .clickable {
+                  interactionTick++
+                  onTogglePlayPause()
+                }
+                .testTag("startup_play_button"),
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              Icon(
+                imageVector = Icons.Rounded.PlayArrow,
+                contentDescription = stringResource(R.string.cd_play_pause),
+                tint = Color.White,
+                modifier = Modifier.size(36.dp),
+              )
+            }
+          }
+          Spacer(modifier = Modifier.height(14.dp))
+          Text(
+            text = activeChannel?.displayTitle ?: "Rifi stream",
+            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+            color = Color.White,
+          )
+          Spacer(modifier = Modifier.height(4.dp))
+          Text(
+            text = "Sélectionnez une chaîne pour lancer la lecture",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color(0xFF94A3B8),
+            textAlign = TextAlign.Center,
+          )
+        }
+      }
+    }
+
     if (isMiniPreview) {
       MiniPreviewOverlay(
         activeChannel = activeChannel,
@@ -211,373 +284,367 @@ fun VideoPlayerStage(
         onExpandFromPreview = onExpandFromPreview,
       )
     } else {
-      AnimatedVisibility(
-        visible = controlsVisible || playbackStatus !is PlaybackStatus.Playing,
-        enter = fadeIn(tween(180)),
-        exit = fadeOut(tween(260)),
-        modifier = Modifier.fillMaxSize(),
-      ) {
-        Box(
-          modifier =
-            Modifier.fillMaxSize()
-              .background(
-                Brush.verticalGradient(
-                  0f to Color.Black.copy(alpha = 0.76f),
-                  0.35f to Color.Transparent,
-                  0.65f to Color.Transparent,
-                  1f to Color.Black.copy(alpha = 0.86f),
-                )
-              )
+      // Overlays: Always show bottom info matching Screenshot_20261127-100720_6de627b1.jpg
+      Box(modifier = Modifier.fillMaxSize()) {
+        // Top controls bar (fades out during continuous playback)
+        AnimatedVisibility(
+          visible = controlsVisible || playbackStatus !is PlaybackStatus.Playing,
+          enter = fadeIn(tween(180)),
+          exit = fadeOut(tween(260)),
+          modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
         ) {
-          val overlayPaddingModifier =
-            if (isFullscreen) {
-              Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp, vertical = 10.dp)
-            } else {
-              Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)
-            }
-
-          Column(
-            modifier = overlayPaddingModifier,
-            verticalArrangement = Arrangement.SpaceBetween,
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .background(
+                  Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.75f),
+                    1f to Color.Transparent,
+                  )
+                )
+                .then(
+                  if (isFullscreen) Modifier.safeDrawingPadding().padding(horizontal = 16.dp, vertical = 10.dp)
+                  else Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
           ) {
-            // Top Overlay: Live Indicator + Active Channel + Quick Actions
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-              Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically,
-              ) {
-                LiveBadge(isLive = playbackStatus is PlaybackStatus.Playing)
-                Spacer(modifier = Modifier.width(8.dp))
-                if (activeChannel != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              val resTag = liveResolutionLabel ?: activeChannel?.resolution
+              if (!resTag.isNullOrBlank()) {
+                Surface(
+                  color = Color.Black.copy(alpha = 0.6f),
+                  shape = RoundedCornerShape(4.dp),
+                  border = BorderStroke(1.dp, Color(0xFF374151)),
+                ) {
                   Text(
-                    text = activeChannel.displayTitle,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = InkPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    text = resTag,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                   )
                 }
-                val badgeText = liveResolutionLabel ?: activeChannel?.resolution
-                if (!badgeText.isNullOrBlank()) {
-                  Spacer(modifier = Modifier.width(8.dp))
-                  Surface(
-                    color = CyanBroadcast.copy(alpha = 0.16f),
-                    shape = RoundedCornerShape(6.dp),
-                    border = BorderStroke(1.dp, CyanBroadcast.copy(alpha = 0.45f)),
-                  ) {
-                    Text(
-                      text = badgeText,
-                      style = MaterialTheme.typography.labelSmall,
-                      color = CyanBroadcast,
-                      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                Spacer(modifier = Modifier.width(8.dp))
+              }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              IconButton(
+                onClick = {
+                  interactionTick++
+                  onToggleMute()
+                },
+                modifier = Modifier.size(36.dp).testTag("player_mute_button"),
+              ) {
+                Icon(
+                  painter =
+                    painterResource(
+                      if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_up
+                    ),
+                  contentDescription = stringResource(R.string.cd_mute_unmute),
+                  tint = if (isMuted) AmberFavorite else Color.White,
+                  modifier = Modifier.size(20.dp),
+                )
+              }
+
+              IconButton(
+                onClick = {
+                  interactionTick++
+                  onCycleAspectRatio()
+                },
+                modifier = Modifier.size(36.dp).testTag("player_aspect_button"),
+              ) {
+                Icon(
+                  painter = painterResource(R.drawable.ic_aspect_ratio),
+                  contentDescription = stringResource(R.string.cd_aspect_ratio),
+                  tint = Color.White,
+                  modifier = Modifier.size(20.dp),
+                )
+              }
+
+              IconButton(
+                onClick = {
+                  interactionTick++
+                  onToggleFullscreen()
+                },
+                modifier = Modifier.size(36.dp).testTag("player_fullscreen_button"),
+              ) {
+                Icon(
+                  painter =
+                    painterResource(
+                      if (isFullscreen) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen
+                    ),
+                  contentDescription = stringResource(R.string.cd_fullscreen),
+                  tint = Color.White,
+                  modifier = Modifier.size(20.dp),
+                )
+              }
+            }
+          }
+        }
+
+        // Center Stage: Buffering or Error state
+        if (playbackStatus is PlaybackStatus.Buffering) {
+          Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(
+              color = OrangeAccent,
+              strokeWidth = 3.dp,
+              modifier = Modifier.size(42.dp),
+            )
+          }
+        } else if (playbackStatus is PlaybackStatus.Error) {
+          Box(
+            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.88f)),
+            contentAlignment = Alignment.Center,
+          ) {
+            Surface(
+              color = Color(0xFF131722),
+              shape = RoundedCornerShape(18.dp),
+              border = BorderStroke(1.dp, Color(0xFF2E384D)),
+              modifier = Modifier.fillMaxWidth(0.88f).padding(16.dp),
+            ) {
+              Column(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+              ) {
+                Surface(
+                  color = Color(0xFFEF4444).copy(alpha = 0.16f),
+                  shape = CircleShape,
+                  modifier = Modifier.size(52.dp),
+                ) {
+                  Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                      painter = painterResource(R.drawable.ic_tv_off),
+                      contentDescription = null,
+                      tint = Color(0xFFFF5252),
+                      modifier = Modifier.size(28.dp),
                     )
                   }
                 }
-              }
 
-              Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                  text = stringResource(R.string.error_playback_title),
+                  style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                  color = Color.White,
+                  textAlign = TextAlign.Center,
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
                 if (activeChannel != null) {
-                  IconButton(
+                  Surface(
+                    color = Color(0xFF1E2638),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.padding(vertical = 2.dp),
+                  ) {
+                    Text(
+                      text = activeChannel.displayTitle,
+                      style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                      color = OrangeAccent,
+                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                  }
+                  Spacer(modifier = Modifier.height(6.dp))
+                }
+
+                Text(
+                  text = stringResource(R.string.error_playback_hint),
+                  style = MaterialTheme.typography.bodyMedium,
+                  color = Color(0xFF94A3B8),
+                  textAlign = TextAlign.Center,
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Row(
+                  horizontalArrangement = Arrangement.spacedBy(10.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Button(
                     onClick = {
                       interactionTick++
-                      onToggleFavorite()
+                      onNextChannel()
                     },
-                    modifier =
-                      Modifier
-                        .minimumInteractiveComponentSize()
-                        .then(tvFocusHighlight())
-                        .testTag("player_favorite_button"),
+                    colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent, contentColor = Color.White),
+                    shape = RoundedCornerShape(999.dp),
+                    modifier = Modifier.height(42.dp).testTag("player_error_next_channel_button"),
                   ) {
                     Icon(
-                      painter = painterResource(if (isFavorite) R.drawable.ic_star else R.drawable.ic_star_border),
-                      contentDescription = stringResource(R.string.cd_favorite_toggle),
-                      tint = if (isFavorite) AmberFavorite else InkPrimary,
+                      painter = painterResource(R.drawable.ic_skip_next),
+                      contentDescription = null,
+                      modifier = Modifier.size(18.dp),
                     )
-                  }
-                }
-
-                IconButton(
-                  onClick = {
-                    interactionTick++
-                    onCycleAspectRatio()
-                  },
-                  modifier =
-                    Modifier
-                      .minimumInteractiveComponentSize()
-                      .then(tvFocusHighlight())
-                      .testTag("player_aspect_button"),
-                ) {
-                  Icon(
-                    painter = painterResource(R.drawable.ic_aspect_ratio),
-                    contentDescription = stringResource(R.string.cd_aspect_ratio),
-                    tint = InkPrimary,
-                  )
-                }
-              }
-            }
-
-            // Center Stage: Buffering / Error / Play-Pause
-            Box(
-              modifier = Modifier.fillMaxWidth().weight(1f),
-              contentAlignment = Alignment.Center,
-            ) {
-              when (playbackStatus) {
-                is PlaybackStatus.Buffering -> {
-                  Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(
-                      color = CyanBroadcast,
-                      strokeWidth = 3.dp,
-                      modifier = Modifier.size(38.dp),
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                      text = stringResource(R.string.buffering_status),
-                      style = MaterialTheme.typography.bodyMedium,
-                      color = InkPrimary,
+                      text = stringResource(R.string.btn_next_channel),
+                      style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                     )
                   }
-                }
-                is PlaybackStatus.Error -> {
+
                   Surface(
-                    color = ObsidianBg.copy(alpha = 0.92f),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, CrimsonLive.copy(alpha = 0.55f)),
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                  ) {
-                    Column(
-                      modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                      horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                      Icon(
-                        painter = painterResource(R.drawable.ic_error_outline),
-                        contentDescription = null,
-                        tint = CrimsonLive,
-                        modifier = Modifier.size(26.dp),
-                      )
-                      Spacer(modifier = Modifier.height(4.dp))
-                      Text(
-                        text = stringResource(R.string.error_playback_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = InkPrimary,
-                      )
-                      Text(
-                        text = playbackStatus.message,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = InkSecondary,
-                        textAlign = TextAlign.Center,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                      )
-                      Spacer(modifier = Modifier.height(10.dp))
-                      Button(
-                        onClick = {
-                          interactionTick++
-                          onRetry()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = CyanBroadcast, contentColor = ObsidianBg),
-                        modifier = Modifier.testTag("player_retry_button"),
-                      ) {
-                        Icon(
-                          imageVector = Icons.Rounded.Refresh,
-                          contentDescription = null,
-                          modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = stringResource(R.string.retry_button))
-                      }
-                    }
-                  }
-                }
-                else -> {
-                  val isPlaying = playbackStatus is PlaybackStatus.Playing
-                  var isCenterFocused by remember { mutableStateOf(false) }
-                  Surface(
-                    color = ObsidianBg.copy(alpha = if (isCenterFocused) 0.88f else 0.68f),
-                    shape = CircleShape,
-                    border =
-                      BorderStroke(
-                        width = if (isCenterFocused) 2.dp else 1.dp,
-                        color = if (isCenterFocused) CyanBroadcast else BorderSlate,
-                      ),
+                    color = Color(0xFF1E2638),
+                    shape = RoundedCornerShape(999.dp),
+                    border = BorderStroke(1.dp, Color(0xFF334155)),
                     modifier =
                       Modifier
-                        .size(54.dp)
-                        .clip(CircleShape)
-                        .onFocusChanged { isCenterFocused = it.isFocused }
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(999.dp))
                         .clickable {
                           interactionTick++
-                          onTogglePlayPause()
+                          onRetry()
                         }
-                        .testTag("player_center_play_pause_button"),
+                        .testTag("player_error_retry_button"),
                   ) {
-                    Box(contentAlignment = Alignment.Center) {
-                      if (isPlaying) {
-                        Icon(
-                          painter = painterResource(R.drawable.ic_pause),
-                          contentDescription = stringResource(R.string.cd_play_pause),
-                          tint = InkPrimary,
-                          modifier = Modifier.size(28.dp),
-                        )
-                      } else {
-                        Icon(
-                          imageVector = Icons.Rounded.PlayArrow,
-                          contentDescription = stringResource(R.string.cd_play_pause),
-                          tint = InkPrimary,
-                          modifier = Modifier.size(28.dp),
-                        )
-                      }
+                    Row(
+                      modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                      Icon(
+                        imageVector = Icons.Rounded.Refresh,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp),
+                      )
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Text(
+                        text = stringResource(R.string.retry_button),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White,
+                      )
                     }
                   }
-                }
-              }
-            }
-
-            // Bottom Transport Bar
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(
-                  onClick = {
-                    interactionTick++
-                    onPreviousChannel()
-                  },
-                  modifier =
-                    Modifier
-                      .minimumInteractiveComponentSize()
-                      .then(tvFocusHighlight())
-                      .testTag("player_prev_button"),
-                ) {
-                  Icon(
-                    painter = painterResource(R.drawable.ic_skip_previous),
-                    contentDescription = stringResource(R.string.cd_previous_channel),
-                    tint = InkPrimary,
-                  )
-                }
-
-                IconButton(
-                  onClick = {
-                    interactionTick++
-                    onTogglePlayPause()
-                  },
-                  modifier =
-                    Modifier
-                      .minimumInteractiveComponentSize()
-                      .then(tvFocusHighlight())
-                      .testTag("player_play_pause_button"),
-                ) {
-                  if (playbackStatus is PlaybackStatus.Playing) {
-                    Icon(
-                      painter = painterResource(R.drawable.ic_pause),
-                      contentDescription = stringResource(R.string.cd_play_pause),
-                      tint = InkPrimary,
-                    )
-                  } else {
-                    Icon(
-                      imageVector = Icons.Rounded.PlayArrow,
-                      contentDescription = stringResource(R.string.cd_play_pause),
-                      tint = InkPrimary,
-                    )
-                  }
-                }
-
-                IconButton(
-                  onClick = {
-                    interactionTick++
-                    onNextChannel()
-                  },
-                  modifier =
-                    Modifier
-                      .minimumInteractiveComponentSize()
-                      .then(tvFocusHighlight())
-                      .testTag("player_next_button"),
-                ) {
-                  Icon(
-                    painter = painterResource(R.drawable.ic_skip_next),
-                    contentDescription = stringResource(R.string.cd_next_channel),
-                    tint = InkPrimary,
-                  )
-                }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                val modeLabel =
-                  when (aspectRatioMode) {
-                    AspectRatioMode.FIT -> "FIT"
-                    AspectRatioMode.FILL -> "FILL"
-                    AspectRatioMode.ZOOM -> "ZOOM"
-                  }
-                Text(
-                  text = modeLabel,
-                  style = MaterialTheme.typography.labelSmall,
-                  color = InkSecondary,
-                  modifier =
-                    Modifier
-                      .clip(RoundedCornerShape(4.dp))
-                      .border(1.dp, BorderSlate, RoundedCornerShape(4.dp))
-                      .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-              }
-
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(
-                  onClick = {
-                    interactionTick++
-                    onToggleMute()
-                  },
-                  modifier =
-                    Modifier
-                      .minimumInteractiveComponentSize()
-                      .then(tvFocusHighlight())
-                      .testTag("player_mute_button"),
-                ) {
-                  Icon(
-                    painter =
-                      painterResource(
-                        if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_up
-                      ),
-                    contentDescription = stringResource(R.string.cd_mute_unmute),
-                    tint = if (isMuted) AmberFavorite else InkPrimary,
-                  )
-                }
-
-                IconButton(
-                  onClick = {
-                    interactionTick++
-                    onToggleFullscreen()
-                  },
-                  modifier =
-                    Modifier
-                      .minimumInteractiveComponentSize()
-                      .then(tvFocusHighlight())
-                      .testTag("player_fullscreen_button"),
-                ) {
-                  Icon(
-                    painter =
-                      painterResource(
-                        if (isFullscreen) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen
-                      ),
-                    contentDescription =
-                      if (isFullscreen) {
-                        stringResource(R.string.cd_exit_fullscreen)
-                      } else {
-                        stringResource(R.string.cd_fullscreen)
-                      },
-                    tint = InkPrimary,
-                  )
                 }
               }
             }
           }
         }
+
+        // Bottom Broadcast Overlay: Exactly matching Screenshot_20261127-100720_6de627b1.jpg
+        Column(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .align(Alignment.BottomCenter)
+              .background(
+                Brush.verticalGradient(
+                  0f to Color.Transparent,
+                  0.35f to Color.Black.copy(alpha = 0.68f),
+                  1f to Color.Black.copy(alpha = 0.94f),
+                )
+              )
+              .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+          // Row 1: Orange Capsule [ • EN DIRECT ] + Channel Name
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            LiveBadge(isLive = playbackStatus is PlaybackStatus.Playing)
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+              text = activeChannel?.displayTitle ?: "Rifi stream",
+              style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+              color = Color.White,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+
+          Spacer(modifier = Modifier.height(4.dp))
+
+          // Row 2: Subtitle / Current program
+          Text(
+            text = programSubtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color(0xFFD1D5DB),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+
+          Spacer(modifier = Modifier.height(8.dp))
+
+          // Row 3: Progress Timeline (21:10 ━━━━━━ 23:25)
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text(
+              text = "21:10",
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFF9CA3AF),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(
+              modifier =
+                Modifier
+                  .weight(1f)
+                  .height(3.dp)
+                  .clip(RoundedCornerShape(2.dp))
+                  .background(Color(0xFF374151))
+            ) {
+              Box(
+                modifier =
+                  Modifier
+                    .fillMaxWidth(0.38f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(OrangeAccent)
+              )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+              text = "23:25",
+              style = MaterialTheme.typography.labelSmall,
+              color = Color(0xFF9CA3AF),
+            )
+          }
+        }
       }
+    }
+  }
+}
+
+@Composable
+private fun LiveBadge(isLive: Boolean) {
+  val infiniteTransition = rememberInfiniteTransition(label = "live_pulse")
+  val pulseAlpha by
+    infiniteTransition.animateFloat(
+      initialValue = 1f,
+      targetValue = 0.25f,
+      animationSpec =
+        infiniteRepeatable(
+          animation = tween(900),
+          repeatMode = RepeatMode.Reverse,
+        ),
+      label = "live_dot_alpha",
+    )
+
+  Surface(
+    color = if (isLive) OrangeLive else Color(0xFF26334A),
+    shape = RoundedCornerShape(6.dp),
+    modifier = Modifier.testTag("live_badge_indicator"),
+  ) {
+    Row(
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Box(
+        modifier =
+          Modifier
+            .size(7.dp)
+            .alpha(if (isLive) pulseAlpha else 0.7f)
+            .clip(CircleShape)
+            .background(Color.White)
+      )
+      Spacer(modifier = Modifier.width(5.dp))
+      Text(
+        text = "EN DIRECT",
+        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+        color = Color.White,
+      )
     }
   }
 }
@@ -605,7 +672,6 @@ private fun MiniPreviewOverlay(
         )
         .padding(6.dp)
   ) {
-    // Top drag handle + bar inside floating preview
     Column(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
       Box(
         modifier =
@@ -615,49 +681,45 @@ private fun MiniPreviewOverlay(
             .width(30.dp)
             .height(3.dp)
             .clip(CircleShape)
-            .background(InkPrimary.copy(alpha = 0.48f))
+            .background(Color.White.copy(alpha = 0.5f))
       )
       Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
       ) {
-        Row(
-          modifier = Modifier.weight(1f),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
           Box(
             modifier =
               Modifier
                 .size(6.dp)
                 .clip(CircleShape)
-                .background(if (playbackStatus is PlaybackStatus.Playing) CrimsonLive else CyanBroadcast)
+                .background(OrangeAccent)
           )
           Spacer(modifier = Modifier.width(5.dp))
           Text(
-            text = activeChannel?.displayTitle ?: stringResource(R.string.preview_badge),
+            text = activeChannel?.displayTitle ?: "Rifi stream",
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = InkPrimary,
+            color = Color.White,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
         }
 
         Surface(
-          color = ObsidianBg.copy(alpha = 0.75f),
+          color = Color(0xFF0F1420).copy(alpha = 0.75f),
           shape = CircleShape,
           modifier =
             Modifier
               .size(28.dp)
               .clip(CircleShape)
-              .clickable(onClick = onExpandFromPreview)
-              .testTag("mini_preview_expand_button"),
+              .clickable(onClick = onExpandFromPreview),
         ) {
           Box(contentAlignment = Alignment.Center) {
             Icon(
               painter = painterResource(R.drawable.ic_open_in_full),
               contentDescription = stringResource(R.string.mini_preview_expand),
-              tint = InkPrimary,
+              tint = Color.White,
               modifier = Modifier.size(15.dp),
             )
           }
@@ -665,183 +727,56 @@ private fun MiniPreviewOverlay(
       }
     }
 
-    // Center mini status indicator (Buffering / Error)
     if (playbackStatus is PlaybackStatus.Buffering) {
       CircularProgressIndicator(
-        color = CyanBroadcast,
+        color = OrangeAccent,
         strokeWidth = 2.5.dp,
         modifier = Modifier.size(24.dp).align(Alignment.Center),
       )
-    } else if (playbackStatus is PlaybackStatus.Error) {
-      Surface(
-        color = ObsidianBg.copy(alpha = 0.85f),
-        shape = CircleShape,
-        border = BorderStroke(1.dp, CrimsonLive.copy(alpha = 0.7f)),
-        modifier =
-          Modifier
-            .size(34.dp)
-            .clip(CircleShape)
-            .align(Alignment.Center)
-            .clickable(onClick = onRetry),
-      ) {
-        Box(contentAlignment = Alignment.Center) {
-          Icon(
-            imageVector = Icons.Rounded.Refresh,
-            contentDescription = stringResource(R.string.retry_button),
-            tint = CrimsonLive,
-            modifier = Modifier.size(18.dp),
-          )
-        }
-      }
     }
 
-    // Bottom quick controls inside floating preview
     Row(
       modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.SpaceBetween,
     ) {
       Surface(
-        color = CyanBroadcast.copy(alpha = 0.16f),
+        color = OrangeAccent.copy(alpha = 0.2f),
         shape = RoundedCornerShape(4.dp),
-        border = BorderStroke(0.5.dp, CyanBroadcast.copy(alpha = 0.45f)),
+        border = BorderStroke(0.5.dp, OrangeAccent),
       ) {
         Text(
-          text = stringResource(R.string.preview_badge),
+          text = "DIRECT",
           style = MaterialTheme.typography.labelSmall,
-          color = CyanBroadcast,
+          color = OrangeAccent,
           modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
         )
       }
 
       Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        MiniPreviewActionChip(
+        IconButton(
           onClick = onTogglePlayPause,
-          testTag = "mini_preview_play_pause",
+          modifier = Modifier.size(28.dp),
         ) {
-          if (playbackStatus is PlaybackStatus.Playing) {
-            Icon(
-              painter = painterResource(R.drawable.ic_pause),
-              contentDescription = stringResource(R.string.cd_play_pause),
-              tint = InkPrimary,
-              modifier = Modifier.size(16.dp),
-            )
-          } else {
-            Icon(
-              imageVector = Icons.Rounded.PlayArrow,
-              contentDescription = stringResource(R.string.cd_play_pause),
-              tint = InkPrimary,
-              modifier = Modifier.size(16.dp),
-            )
-          }
+          Icon(
+            imageVector = Icons.Rounded.PlayArrow,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(16.dp),
+          )
         }
-        MiniPreviewActionChip(
+        IconButton(
           onClick = onToggleMute,
-          testTag = "mini_preview_mute",
+          modifier = Modifier.size(28.dp),
         ) {
           Icon(
-            painter =
-              painterResource(
-                if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_up
-              ),
-            contentDescription = stringResource(R.string.cd_mute_unmute),
-            tint = if (isMuted) AmberFavorite else InkPrimary,
-            modifier = Modifier.size(16.dp),
-          )
-        }
-        MiniPreviewActionChip(
-          onClick = onNextChannel,
-          testTag = "mini_preview_next",
-        ) {
-          Icon(
-            painter = painterResource(R.drawable.ic_skip_next),
-            contentDescription = stringResource(R.string.cd_next_channel),
-            tint = InkPrimary,
+            painter = painterResource(if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_up),
+            contentDescription = null,
+            tint = Color.White,
             modifier = Modifier.size(16.dp),
           )
         }
       }
     }
   }
-}
-
-@Composable
-private fun MiniPreviewActionChip(
-  onClick: () -> Unit,
-  testTag: String,
-  content: @Composable () -> Unit,
-) {
-  Surface(
-    color = ObsidianBg.copy(alpha = 0.78f),
-    shape = CircleShape,
-    border = BorderStroke(0.8.dp, BorderSlate),
-    modifier =
-      Modifier
-        .size(28.dp)
-        .clip(CircleShape)
-        .clickable(onClick = onClick)
-        .testTag(testTag),
-  ) {
-    Box(contentAlignment = Alignment.Center) { content() }
-  }
-}
-
-@Composable
-private fun LiveBadge(isLive: Boolean) {
-  val infiniteTransition = rememberInfiniteTransition(label = "live_pulse")
-  val pulseAlpha by
-    infiniteTransition.animateFloat(
-      initialValue = 1f,
-      targetValue = 0.25f,
-      animationSpec =
-        infiniteRepeatable(
-          animation = tween(900),
-          repeatMode = RepeatMode.Reverse,
-        ),
-      label = "live_dot_alpha",
-    )
-
-  Surface(
-    color = if (isLive) CrimsonLive.copy(alpha = 0.22f) else BorderSlate.copy(alpha = 0.6f),
-    shape = RoundedCornerShape(6.dp),
-    border =
-      BorderStroke(
-        1.dp,
-        if (isLive) CrimsonLive.copy(alpha = 0.75f) else BorderSlate,
-      ),
-  ) {
-    Row(
-      modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      Box(
-        modifier =
-          Modifier
-            .size(7.dp)
-            .alpha(if (isLive) pulseAlpha else 0.7f)
-            .clip(CircleShape)
-            .background(if (isLive) CrimsonLive else InkSecondary)
-      )
-      Spacer(modifier = Modifier.width(5.dp))
-      Text(
-        text = stringResource(R.string.live_badge),
-        style = MaterialTheme.typography.labelSmall,
-        color = InkPrimary,
-      )
-    }
-  }
-}
-
-@Composable
-private fun tvFocusHighlight(shape: RoundedCornerShape = CircleShape): Modifier {
-  var isFocused by remember { mutableStateOf(false) }
-  return Modifier
-    .onFocusChanged { isFocused = it.isFocused }
-    .then(
-      if (isFocused) {
-        Modifier.border(2.dp, CyanBroadcast, shape)
-      } else {
-        Modifier
-      }
-    )
 }

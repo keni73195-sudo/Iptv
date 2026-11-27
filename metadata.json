@@ -1,5 +1,5 @@
 {
-  "name": "OndeTV",
+  "name": "Rifi stream",
   "description": "Lecteur IPTV en direct avec support des playlists M3U, en-têtes HTTP personnalisés et lecture HLS via Media3.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
