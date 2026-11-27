@@ -787,6 +787,14 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
       }
     }
 
+  fun forceDisconnectPlayback() {
+    _isFullscreen.value = false
+    _isImportDialogOpen.value = false
+    _pendingAdultPrompt.value = false
+    _isAdultUnlocked.value = false
+    playerManager.stopPlaybackAndClear()
+  }
+
   override fun onCleared() {
     playerManager.release()
     super.onCleared()

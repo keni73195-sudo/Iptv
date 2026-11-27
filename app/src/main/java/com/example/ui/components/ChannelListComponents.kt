@@ -32,9 +32,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ExitToApp
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -126,9 +128,14 @@ fun BroadcastTopHeaderAndSearchBar(
   filteredCount: Int,
   totalCount: Int,
   isSyncingSources: Boolean,
+  profileName: String? = null,
+  remainingBadge: String? = null,
+  isAdmin: Boolean = false,
   onSearchQueryChange: (String) -> Unit,
   onTabSelected: (String) -> Unit,
   onOpenImport: () -> Unit,
+  onOpenAdminPanel: (() -> Unit)? = null,
+  onSignOut: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   var isSearchExpanded by remember { mutableStateOf(false) }
@@ -155,8 +162,13 @@ fun BroadcastTopHeaderAndSearchBar(
               isCompact = true,
               isSearchActive = isSearchExpanded || searchQuery.isNotEmpty(),
               isSyncingSources = isSyncingSources,
+              profileName = profileName,
+              remainingBadge = remainingBadge,
+              isAdmin = isAdmin,
               onToggleSearch = { isSearchExpanded = !isSearchExpanded },
               onOpenImport = onOpenImport,
+              onOpenAdminPanel = onOpenAdminPanel,
+              onSignOut = onSignOut,
             )
           }
 
@@ -193,8 +205,13 @@ fun BroadcastTopHeaderAndSearchBar(
               isCompact = false,
               isSearchActive = isSearchExpanded || searchQuery.isNotEmpty(),
               isSyncingSources = isSyncingSources,
+              profileName = profileName,
+              remainingBadge = remainingBadge,
+              isAdmin = isAdmin,
               onToggleSearch = { isSearchExpanded = !isSearchExpanded },
               onOpenImport = onOpenImport,
+              onOpenAdminPanel = onOpenAdminPanel,
+              onSignOut = onSignOut,
             )
           }
         }
@@ -381,28 +398,99 @@ private fun HeaderRightActions(
   isCompact: Boolean,
   isSearchActive: Boolean,
   isSyncingSources: Boolean,
+  profileName: String?,
+  remainingBadge: String?,
+  isAdmin: Boolean,
   onToggleSearch: () -> Unit,
   onOpenImport: () -> Unit,
+  onOpenAdminPanel: (() -> Unit)?,
+  onSignOut: (() -> Unit)?,
 ) {
   var isSearchBtnFocused by remember { mutableStateOf(false) }
   var isImportBtnFocused by remember { mutableStateOf(false) }
+  var isAdminBtnFocused by remember { mutableStateOf(false) }
+  var isSignOutBtnFocused by remember { mutableStateOf(false) }
   val timeText = rememberCurrentTimeText()
 
   Row(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    if (!isCompact) {
+    if (!profileName.isNullOrBlank() || isAdmin) {
       Surface(
-        color = Color(0xFFFF5B5B),
+        color = Color(0xFF131722),
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, if (isAdmin) CyanBroadcast.copy(alpha = 0.6f) else BorderSlate),
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          val initial =
+            (profileName?.firstOrNull() ?: if (isAdmin) 'A' else 'R').uppercaseChar().toString()
+          Surface(
+            color = if (isAdmin) CyanBroadcast else OrangeAccent,
+            shape = CircleShape,
+            modifier = Modifier.size(22.dp),
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              Text(
+                text = initial,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = Color.Black,
+              )
+            }
+          }
+          if (!isCompact && !profileName.isNullOrBlank()) {
+            Text(
+              text = profileName,
+              style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+              color = Color.White,
+              maxLines = 1,
+            )
+          }
+          if (isAdmin) {
+            Text(
+              text = "ADMIN",
+              style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+              color = CyanBroadcast,
+            )
+          } else if (!remainingBadge.isNullOrBlank()) {
+            Text(
+              text = remainingBadge,
+              style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+              color = EmeraldReady,
+              maxLines = 1,
+            )
+          }
+        }
+      }
+    }
+
+    if (isAdmin && onOpenAdminPanel != null) {
+      Surface(
+        color = if (isAdminBtnFocused) CyanBroadcast.copy(alpha = 0.28f) else Color(0xFF131722),
         shape = CircleShape,
-        modifier = Modifier.size(32.dp),
+        border =
+          BorderStroke(
+            width = if (isAdminBtnFocused) 2.dp else 1.dp,
+            color = if (isAdminBtnFocused) CyanBroadcast else CyanBroadcast.copy(alpha = 0.55f),
+          ),
+        modifier =
+          Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .onFocusChanged { isAdminBtnFocused = it.isFocused }
+            .clickable(onClick = onOpenAdminPanel)
+            .testTag("header_admin_button"),
       ) {
         Box(contentAlignment = Alignment.Center) {
-          Text(
-            text = "S",
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-            color = Color.White,
+          Icon(
+            imageVector = Icons.Rounded.Settings,
+            contentDescription = stringResource(R.string.admin_open_panel),
+            tint = CyanBroadcast,
+            modifier = Modifier.size(17.dp),
           )
         }
       }
@@ -469,6 +557,34 @@ private fun HeaderRightActions(
             painter = painterResource(R.drawable.ic_playlist_add),
             contentDescription = stringResource(R.string.cd_import_playlist),
             tint = if (isImportBtnFocused) OrangeAccent else Color(0xFF9CA3AF),
+            modifier = Modifier.size(17.dp),
+          )
+        }
+      }
+    }
+
+    if (onSignOut != null) {
+      Surface(
+        color = if (isSignOutBtnFocused) CrimsonLive.copy(alpha = 0.26f) else Color(0xFF131722),
+        shape = CircleShape,
+        border =
+          BorderStroke(
+            width = if (isSignOutBtnFocused) 2.dp else 1.dp,
+            color = if (isSignOutBtnFocused) CrimsonLive else Color(0xFF222838),
+          ),
+        modifier =
+          Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .onFocusChanged { isSignOutBtnFocused = it.isFocused }
+            .clickable(onClick = onSignOut)
+            .testTag("header_sign_out_button"),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Icon(
+            imageVector = Icons.AutoMirrored.Rounded.ExitToApp,
+            contentDescription = stringResource(R.string.cd_sign_out),
+            tint = if (isSignOutBtnFocused) CrimsonLive else Color(0xFF9CA3AF),
             modifier = Modifier.size(17.dp),
           )
         }

@@ -102,6 +102,11 @@ fun IptvScreen(
   onResetDefaultPlaylist: () -> Unit,
   onClearFeedbackBanner: () -> Unit,
   onClearRecentChannels: () -> Unit,
+  profileName: String? = null,
+  remainingBadge: String? = null,
+  isAdmin: Boolean = false,
+  onOpenAdminPanel: (() -> Unit)? = null,
+  onSignOut: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   val snackbarHostState = remember { SnackbarHostState() }
@@ -213,9 +218,14 @@ fun IptvScreen(
             filteredCount = uiState.filteredChannels.size,
             totalCount = uiState.allChannels.size,
             isSyncingSources = uiState.isSyncingSources,
+            profileName = profileName,
+            remainingBadge = remainingBadge,
+            isAdmin = isAdmin,
             onSearchQueryChange = onSearchQueryChange,
             onTabSelected = { selectedTab = it },
             onOpenImport = onOpenImportDialog,
+            onOpenAdminPanel = onOpenAdminPanel,
+            onSignOut = onSignOut,
           )
 
           BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {

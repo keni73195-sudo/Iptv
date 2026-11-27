@@ -25,3 +25,5 @@
 -dontwarn org.openjsse.**
 -dontwarn javax.annotation.**
 
+-keep class com.example.model.** { *; }
+

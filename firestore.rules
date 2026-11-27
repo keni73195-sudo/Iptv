@@ -1,0 +1,271 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == 'sheriforouyo@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin()
+        || (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function isValidId(id) {
+      return id is string
+        && id.size() >= 1
+        && id.size() <= 128
+        && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    function isValidCodeId(codeId) {
+      return codeId is string
+        && codeId.size() >= 6
+        && codeId.size() <= 32
+        && codeId.matches('^[A-Z0-9_-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidAdminDoc(d, adminUid) {
+      return d.keys().hasAll(['uid', 'email', 'createdAt'])
+        && d.keys().hasOnly(['uid', 'email', 'createdAt'])
+        && d.uid == adminUid
+        && d.email is string
+        && d.email.size() >= 3
+        && d.email.size() <= 160
+        && d.createdAt is timestamp
+        && d.createdAt <= request.time;
+    }
+
+    function isValidActivationCode(d, codeId) {
+      let requiredKeys = [
+        'code',
+        'planLabel',
+        'durationMillis',
+        'status',
+        'createdByUid',
+        'createdAt',
+        'updatedAt',
+        'redeemedByUid',
+        'redeemedProfileName',
+        'redeemedDeviceId',
+        'expiresAtMillis'
+      ];
+      let allowedKeys = [
+        'code',
+        'planLabel',
+        'durationMillis',
+        'status',
+        'createdByUid',
+        'createdAt',
+        'updatedAt',
+        'redeemedByUid',
+        'redeemedProfileName',
+        'redeemedDeviceId',
+        'redeemedAt',
+        'expiresAtMillis'
+      ];
+      return d.keys().hasAll(requiredKeys)
+        && d.keys().hasOnly(allowedKeys)
+        && d.code == codeId
+        && d.planLabel is string
+        && d.planLabel.size() >= 1
+        && d.planLabel.size() <= 40
+        && d.durationMillis is int
+        && d.durationMillis > 0
+        && d.durationMillis <= 316224000000
+        && d.status in ['AVAILABLE', 'REDEEMED', 'REVOKED']
+        && d.createdByUid is string
+        && d.createdByUid.size() >= 1
+        && d.createdByUid.size() <= 128
+        && d.createdAt is timestamp
+        && d.createdAt <= request.time
+        && d.updatedAt is timestamp
+        && d.updatedAt <= request.time
+        && d.redeemedByUid is string
+        && d.redeemedByUid.size() <= 128
+        && d.redeemedProfileName is string
+        && d.redeemedProfileName.size() <= 40
+        && d.redeemedDeviceId is string
+        && d.redeemedDeviceId.size() <= 128
+        && d.expiresAtMillis is int
+        && d.expiresAtMillis >= 0
+        && (!('redeemedAt' in d) || d.redeemedAt == null || (d.redeemedAt is timestamp && d.redeemedAt <= request.time));
+    }
+
+    function isValidUserProfile(d, userId) {
+      let allKeys = [
+        'userId',
+        'profileName',
+        'email',
+        'activeCode',
+        'planLabel',
+        'durationMillis',
+        'deviceId',
+        'revoked',
+        'activatedAt',
+        'updatedAt',
+        'expiresAtMillis'
+      ];
+      return d.keys().hasAll(allKeys)
+        && d.keys().hasOnly(allKeys)
+        && d.userId == userId
+        && d.profileName is string
+        && d.profileName.size() >= 2
+        && d.profileName.size() <= 40
+        && d.email is string
+        && d.email.size() <= 160
+        && d.activeCode is string
+        && d.activeCode.size() >= 6
+        && d.activeCode.size() <= 32
+        && d.planLabel is string
+        && d.planLabel.size() >= 1
+        && d.planLabel.size() <= 40
+        && d.durationMillis is int
+        && d.durationMillis > 0
+        && d.durationMillis <= 316224000000
+        && d.deviceId is string
+        && d.deviceId.size() >= 4
+        && d.deviceId.size() <= 128
+        && d.revoked is bool
+        && d.activatedAt is timestamp
+        && d.activatedAt <= request.time
+        && d.updatedAt is timestamp
+        && d.updatedAt <= request.time
+        && d.expiresAtMillis is int
+        && d.expiresAtMillis >= 0;
+    }
+
+    function isCodeRedemptionValidForUser(userId) {
+      let codeId = incoming().activeCode;
+      return isValidCodeId(codeId)
+        && exists(/databases/$(database)/documents/activation_codes/$(codeId))
+        && get(/databases/$(database)/documents/activation_codes/$(codeId)).data.status == 'AVAILABLE'
+        && getAfter(/databases/$(database)/documents/activation_codes/$(codeId)).data.status == 'REDEEMED'
+        && getAfter(/databases/$(database)/documents/activation_codes/$(codeId)).data.redeemedByUid == userId
+        && incoming().planLabel == get(/databases/$(database)/documents/activation_codes/$(codeId)).data.planLabel
+        && incoming().durationMillis == get(/databases/$(database)/documents/activation_codes/$(codeId)).data.durationMillis
+        && incoming().expiresAtMillis == getAfter(/databases/$(database)/documents/activation_codes/$(codeId)).data.expiresAtMillis
+        && incoming().revoked == false;
+    }
+
+    match /admins/{adminUid} {
+      allow get: if isSignedIn() && (request.auth.uid == adminUid || isBootstrappedAdmin());
+      allow list: if isBootstrappedAdmin();
+      allow create, update: if isBootstrappedAdmin()
+        && isValidId(adminUid)
+        && isValidAdminDoc(incoming(), adminUid);
+      allow delete: if isBootstrappedAdmin();
+    }
+
+    match /time_sync/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(userId);
+      allow list: if false;
+      allow create, update: if isSignedIn()
+        && request.auth.uid == userId
+        && isValidId(userId)
+        && incoming().keys().hasAll(['userId', 'syncedAt'])
+        && incoming().keys().hasOnly(['userId', 'syncedAt'])
+        && incoming().userId == userId
+        && incoming().syncedAt is timestamp
+        && incoming().syncedAt <= request.time;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /activation_codes/{codeId} {
+      allow get: if isAdmin() || (isSignedIn() && isValidCodeId(codeId));
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidCodeId(codeId)
+        && isValidActivationCode(incoming(), codeId)
+        && incoming().status == 'AVAILABLE'
+        && incoming().createdByUid == request.auth.uid
+        && incoming().redeemedByUid == ''
+        && incoming().redeemedProfileName == ''
+        && incoming().redeemedDeviceId == ''
+        && incoming().expiresAtMillis == 0;
+      allow update: if isValidCodeId(codeId)
+        && isValidActivationCode(incoming(), codeId)
+        && (
+          (
+            isAdmin()
+            && incoming().code == existing().code
+            && incoming().createdByUid == existing().createdByUid
+            && incoming().createdAt == existing().createdAt
+          )
+          ||
+          (
+            isSignedIn()
+            && existing().status == 'AVAILABLE'
+            && incoming().status == 'REDEEMED'
+            && incoming().redeemedByUid == request.auth.uid
+            && incoming().redeemedProfileName.size() >= 2
+            && incoming().redeemedDeviceId.size() >= 4
+            && ('redeemedAt' in incoming())
+            && incoming().redeemedAt is timestamp
+            && incoming().redeemedAt <= request.time
+            && incoming().expiresAtMillis > request.time.toMillis()
+            && incoming().expiresAtMillis <= request.time.toMillis() + existing().durationMillis + 120000
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status',
+              'redeemedByUid',
+              'redeemedProfileName',
+              'redeemedDeviceId',
+              'redeemedAt',
+              'expiresAtMillis',
+              'updatedAt'
+            ])
+            && existsAfter(/databases/$(database)/documents/user_profiles/$(request.auth.uid))
+            && getAfter(/databases/$(database)/documents/user_profiles/$(request.auth.uid)).data.activeCode == codeId
+          )
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /user_profiles/{userId} {
+      allow get: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow list: if isAdmin();
+      allow create: if isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && (
+          isAdmin()
+          || (isSignedIn() && request.auth.uid == userId && isCodeRedemptionValidForUser(userId))
+        );
+      allow update: if isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && (
+          isAdmin()
+          || (
+            isSignedIn()
+            && request.auth.uid == userId
+            && (
+              (
+                existing().revoked == false
+                && incoming().revoked == false
+                && incoming().diff(existing()).affectedKeys().hasOnly(['profileName', 'updatedAt'])
+              )
+              || isCodeRedemptionValidForUser(userId)
+            )
+          )
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

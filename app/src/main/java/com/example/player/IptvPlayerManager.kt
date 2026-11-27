@@ -464,6 +464,18 @@ class IptvPlayerManager(context: Context) {
     player.volume = if (muted) 0f else 1f
   }
 
+  fun stopPlaybackAndClear() {
+    isUserPaused = true
+    cancelBackgroundTimers()
+    currentChannel = null
+    hasStartedPlayingCurrentChannel = false
+    autoReconnectAttempt = 0
+    _videoResolutionLabel.value = null
+    player.stop()
+    player.clearMediaItems()
+    _playbackStatus.value = PlaybackStatus.Idle
+  }
+
   fun release() {
     cancelBackgroundTimers()
     scope.cancel()

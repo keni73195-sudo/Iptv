@@ -1,0 +1,59 @@
+{
+  "firestore": {
+    "database": "ai-studio-android-ondetv-85508acc-13ab-4422-a6cd-95a28ba03f93",
+    "collections": {
+      "admins": {
+        "description": "Authorized administrator accounts able to manage activation codes and user subscriptions.",
+        "documentId": "adminUid",
+        "fields": {
+          "uid": { "type": "string", "required": true },
+          "email": { "type": "string", "required": true },
+          "createdAt": { "type": "timestamp", "required": true }
+        }
+      },
+      "time_sync": {
+        "description": "Lightweight per-user server timestamp document used to compute trusted server clock offset.",
+        "documentId": "userId",
+        "fields": {
+          "userId": { "type": "string", "required": true },
+          "syncedAt": { "type": "timestamp", "required": true }
+        }
+      },
+      "activation_codes": {
+        "description": "Admin-issued single-use activation codes for trial (10 min) and paid plans (1m, 6m, 1y).",
+        "documentId": "codeId",
+        "fields": {
+          "code": { "type": "string", "required": true },
+          "planLabel": { "type": "string", "required": true },
+          "durationMillis": { "type": "integer", "required": true },
+          "status": { "type": "string", "enum": ["AVAILABLE", "REDEEMED", "REVOKED"], "required": true },
+          "createdByUid": { "type": "string", "required": true },
+          "createdAt": { "type": "timestamp", "required": true },
+          "updatedAt": { "type": "timestamp", "required": true },
+          "redeemedByUid": { "type": "string", "required": true },
+          "redeemedProfileName": { "type": "string", "required": true },
+          "redeemedDeviceId": { "type": "string", "required": true },
+          "redeemedAt": { "type": "timestamp", "required": false },
+          "expiresAtMillis": { "type": "integer", "required": true }
+        }
+      },
+      "user_profiles": {
+        "description": "Activated subscriber profiles gated by active code redemption and expiration timestamp.",
+        "documentId": "userId",
+        "fields": {
+          "userId": { "type": "string", "required": true },
+          "profileName": { "type": "string", "required": true },
+          "email": { "type": "string", "required": true },
+          "activeCode": { "type": "string", "required": true },
+          "planLabel": { "type": "string", "required": true },
+          "durationMillis": { "type": "integer", "required": true },
+          "deviceId": { "type": "string", "required": true },
+          "revoked": { "type": "boolean", "required": true },
+          "activatedAt": { "type": "timestamp", "required": true },
+          "updatedAt": { "type": "timestamp", "required": true },
+          "expiresAtMillis": { "type": "integer", "required": true }
+        }
+      }
+    }
+  }
+}
