@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.annotation.DrawableRes
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
@@ -15,13 +16,13 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,7 +43,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -54,9 +54,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -68,8 +71,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -81,12 +84,6 @@ import com.example.model.Channel
 import com.example.model.ChannelCategory
 import com.example.model.PlaybackStatus
 import com.example.ui.theme.AmberFavorite
-import com.example.ui.theme.BorderSlate
-import com.example.ui.theme.CrimsonLive
-import com.example.ui.theme.CyanBroadcast
-import com.example.ui.theme.InkPrimary
-import com.example.ui.theme.InkSecondary
-import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.OrangeAccent
 import com.example.ui.theme.OrangeLive
 import kotlinx.coroutines.delay
@@ -112,18 +109,57 @@ fun VideoPlayerStage(
   onToggleFullscreen: () -> Unit,
   modifier: Modifier = Modifier,
   isMiniPreview: Boolean = false,
+  isTelevision: Boolean = false,
+  dialedChannelInput: String? = null,
   onExpandFromPreview: () -> Unit = {},
 ) {
   var controlsVisible by remember { mutableStateOf(true) }
   var interactionTick by remember { mutableIntStateOf(0) }
+  var isRootSelfFocused by remember { mutableStateOf(false) }
+  var focusPlayPausePending by remember { mutableStateOf(false) }
 
-  LaunchedEffect(playbackStatus, interactionTick, activeChannel?.id, isMiniPreview) {
-    if (playbackStatus is PlaybackStatus.Playing && !isMiniPreview && !isFullscreen) {
+  val rootFocusRequester = remember { FocusRequester() }
+  val playPauseFocusRequester = remember { FocusRequester() }
+  val errorNextFocusRequester = remember { FocusRequester() }
+  val currentTimeText = rememberCurrentTimeText()
+
+  LaunchedEffect(playbackStatus, interactionTick, activeChannel?.id, isMiniPreview, isFullscreen) {
+    if (playbackStatus is PlaybackStatus.Playing && !isMiniPreview) {
       controlsVisible = true
       delay(4_500L)
       controlsVisible = false
     } else {
       controlsVisible = true
+    }
+  }
+
+  LaunchedEffect(isFullscreen) {
+    if (isFullscreen) {
+      interactionTick++
+      delay(80L)
+      runCatching { rootFocusRequester.requestFocus() }
+    }
+  }
+
+  LaunchedEffect(controlsVisible, isFullscreen, playbackStatus) {
+    if (isFullscreen && !controlsVisible && playbackStatus is PlaybackStatus.Playing) {
+      delay(60L)
+      runCatching { rootFocusRequester.requestFocus() }
+    }
+  }
+
+  LaunchedEffect(focusPlayPausePending, controlsVisible) {
+    if (focusPlayPausePending && controlsVisible) {
+      delay(50L)
+      runCatching { playPauseFocusRequester.requestFocus() }
+      focusPlayPausePending = false
+    }
+  }
+
+  LaunchedEffect(playbackStatus, isFullscreen) {
+    if (playbackStatus is PlaybackStatus.Error && isFullscreen) {
+      delay(80L)
+      runCatching { errorNextFocusRequester.requestFocus() }
     }
   }
 
@@ -144,7 +180,7 @@ fun VideoPlayerStage(
         ChannelCategory.KIDS -> "Dessins animés & Aventures"
         ChannelCategory.DOCUMENTARY -> "Grande soirée Découverte"
         ChannelCategory.MUSIC -> "Live Session & Clips non-stop"
-        else -> "La Nuit des courts métrages"
+        else -> "Diffusion en direct"
       }
     }
 
@@ -153,26 +189,80 @@ fun VideoPlayerStage(
       modifier
         .background(Color.Black)
         .then(
+          if (!isFullscreen && !isMiniPreview && isRootSelfFocused) {
+            Modifier.border(2.5.dp, OrangeAccent, RoundedCornerShape(20.dp))
+          } else {
+            Modifier
+          }
+        )
+        .then(
           if (isMiniPreview) {
             Modifier
           } else {
             Modifier
+              .focusRequester(rootFocusRequester)
+              .onFocusChanged { isRootSelfFocused = it.isFocused }
+              .focusable()
               .onPreviewKeyEvent { keyEvent ->
                 if (keyEvent.type == KeyEventType.KeyDown) {
+                  val key = keyEvent.key
+                  val isOkKey =
+                    key == Key.DirectionCenter || key == Key.Enter || key == Key.NumPadEnter
                   val isNavKey =
-                    keyEvent.key == Key.DirectionCenter ||
-                      keyEvent.key == Key.Enter ||
-                      keyEvent.key == Key.NumPadEnter ||
-                      keyEvent.key == Key.DirectionUp ||
-                      keyEvent.key == Key.DirectionDown ||
-                      keyEvent.key == Key.DirectionLeft ||
-                      keyEvent.key == Key.DirectionRight
-                  if (isNavKey) {
-                    val wasHidden = !controlsVisible
-                    controlsVisible = true
-                    interactionTick++
-                    if (wasHidden && (keyEvent.key == Key.DirectionCenter || keyEvent.key == Key.Enter || keyEvent.key == Key.NumPadEnter)) {
+                    isOkKey ||
+                      key == Key.DirectionUp ||
+                      key == Key.DirectionDown ||
+                      key == Key.DirectionLeft ||
+                      key == Key.DirectionRight
+
+                  if (isFullscreen) {
+                    if (!controlsVisible && playbackStatus is PlaybackStatus.Playing) {
+                      when (key) {
+                        Key.DirectionUp -> {
+                          onPreviousChannel()
+                          controlsVisible = true
+                          interactionTick++
+                          return@onPreviewKeyEvent true
+                        }
+                        Key.DirectionDown -> {
+                          onNextChannel()
+                          controlsVisible = true
+                          interactionTick++
+                          return@onPreviewKeyEvent true
+                        }
+                        Key.DirectionCenter,
+                        Key.Enter,
+                        Key.NumPadEnter,
+                        Key.DirectionLeft,
+                        Key.DirectionRight -> {
+                          controlsVisible = true
+                          interactionTick++
+                          focusPlayPausePending = true
+                          return@onPreviewKeyEvent true
+                        }
+                      }
+                    } else if (isNavKey) {
+                      interactionTick++
+                      if (isRootSelfFocused && isOkKey) {
+                        if (playbackStatus is PlaybackStatus.Idle) {
+                          onTogglePlayPause()
+                        } else {
+                          focusPlayPausePending = true
+                        }
+                        return@onPreviewKeyEvent true
+                      }
+                    }
+                  } else {
+                    if (isRootSelfFocused && isOkKey) {
+                      if (playbackStatus is PlaybackStatus.Idle) {
+                        onTogglePlayPause()
+                      } else {
+                        onToggleFullscreen()
+                      }
                       return@onPreviewKeyEvent true
+                    }
+                    if (isNavKey) {
+                      interactionTick++
                     }
                   }
                 }
@@ -182,8 +272,13 @@ fun VideoPlayerStage(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
               ) {
-                controlsVisible = !controlsVisible
-                if (controlsVisible) interactionTick++
+                if (isFullscreen) {
+                  controlsVisible = !controlsVisible
+                  if (controlsVisible) interactionTick++
+                } else {
+                  controlsVisible = !controlsVisible
+                  if (controlsVisible) interactionTick++
+                }
               }
           }
         )
@@ -233,13 +328,16 @@ fun VideoPlayerStage(
           horizontalAlignment = Alignment.CenterHorizontally,
           modifier = Modifier.padding(20.dp),
         ) {
+          var isPlayFocused by remember { mutableStateOf(false) }
           Surface(
             color = OrangeAccent,
             shape = CircleShape,
+            border = if (isPlayFocused) BorderStroke(2.5.dp, Color.White) else null,
             modifier =
               Modifier
                 .size(60.dp)
                 .clip(CircleShape)
+                .onFocusChanged { isPlayFocused = it.isFocused }
                 .clickable {
                   interactionTick++
                   onTogglePlayPause()
@@ -284,7 +382,6 @@ fun VideoPlayerStage(
         onExpandFromPreview = onExpandFromPreview,
       )
     } else {
-      // Overlays: Always show bottom info matching Screenshot_20261127-100720_6de627b1.jpg
       Box(modifier = Modifier.fillMaxSize()) {
         // Top controls bar (fades out during continuous playback)
         AnimatedVisibility(
@@ -299,18 +396,37 @@ fun VideoPlayerStage(
                 .fillMaxWidth()
                 .background(
                   Brush.verticalGradient(
-                    0f to Color.Black.copy(alpha = 0.75f),
+                    0f to Color.Black.copy(alpha = 0.78f),
                     1f to Color.Transparent,
                   )
                 )
                 .then(
-                  if (isFullscreen) Modifier.safeDrawingPadding().padding(horizontal = 16.dp, vertical = 10.dp)
-                  else Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                  if (isFullscreen) {
+                    Modifier.safeDrawingPadding().padding(start = 16.dp, end = 104.dp, top = 10.dp, bottom = 10.dp)
+                  } else {
+                    Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                  }
                 ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
           ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+              if (isFullscreen && activeChannel != null) {
+                Surface(
+                  color = OrangeAccent.copy(alpha = 0.22f),
+                  shape = RoundedCornerShape(6.dp),
+                  border = BorderStroke(1.dp, OrangeAccent.copy(alpha = 0.65f)),
+                ) {
+                  Text(
+                    text = "CH ${activeChannel.number}",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                  )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+              }
+
               val resTag = liveResolutionLabel ?: activeChannel?.resolution
               if (!resTag.isNullOrBlank()) {
                 Surface(
@@ -325,59 +441,90 @@ fun VideoPlayerStage(
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                   )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
               }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              IconButton(
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              HudActionButton(
                 onClick = {
                   interactionTick++
                   onToggleMute()
                 },
-                modifier = Modifier.size(36.dp).testTag("player_mute_button"),
-              ) {
-                Icon(
-                  painter =
-                    painterResource(
-                      if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_up
-                    ),
-                  contentDescription = stringResource(R.string.cd_mute_unmute),
-                  tint = if (isMuted) AmberFavorite else Color.White,
-                  modifier = Modifier.size(20.dp),
-                )
-              }
+                onFocused = { interactionTick++ },
+                iconRes = if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_up,
+                contentDescription = stringResource(R.string.cd_mute_unmute),
+                tint = if (isMuted) AmberFavorite else Color.White,
+                modifier = Modifier.testTag("player_mute_button"),
+              )
 
-              IconButton(
+              HudActionButton(
                 onClick = {
                   interactionTick++
                   onCycleAspectRatio()
                 },
-                modifier = Modifier.size(36.dp).testTag("player_aspect_button"),
-              ) {
-                Icon(
-                  painter = painterResource(R.drawable.ic_aspect_ratio),
-                  contentDescription = stringResource(R.string.cd_aspect_ratio),
-                  tint = Color.White,
-                  modifier = Modifier.size(20.dp),
-                )
-              }
+                onFocused = { interactionTick++ },
+                iconRes = R.drawable.ic_aspect_ratio,
+                contentDescription = stringResource(R.string.cd_aspect_ratio),
+                modifier = Modifier.testTag("player_aspect_button"),
+              )
 
-              IconButton(
+              HudActionButton(
                 onClick = {
                   interactionTick++
                   onToggleFullscreen()
                 },
-                modifier = Modifier.size(36.dp).testTag("player_fullscreen_button"),
+                onFocused = { interactionTick++ },
+                iconRes =
+                  if (isFullscreen) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen,
+                contentDescription =
+                  stringResource(
+                    if (isFullscreen) R.string.cd_exit_fullscreen else R.string.cd_fullscreen
+                  ),
+                modifier = Modifier.testTag("player_fullscreen_button"),
+              )
+            }
+          }
+        }
+
+        // Fullscreen Always-On Top-Right Live Clock (+ Numeric Channel Dial OSD)
+        if (isFullscreen) {
+          Column(
+            horizontalAlignment = Alignment.End,
+            modifier =
+              Modifier
+                .align(Alignment.TopEnd)
+                .safeDrawingPadding()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+          ) {
+            Surface(
+              color = Color.Black.copy(alpha = 0.58f),
+              shape = RoundedCornerShape(999.dp),
+              border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+              modifier = Modifier.testTag("fullscreen_live_clock"),
+            ) {
+              Text(
+                text = currentTimeText,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                color = Color.White,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+              )
+            }
+
+            if (!dialedChannelInput.isNullOrBlank()) {
+              Spacer(modifier = Modifier.height(8.dp))
+              Surface(
+                color = OrangeAccent,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.testTag("fullscreen_dial_osd"),
               ) {
-                Icon(
-                  painter =
-                    painterResource(
-                      if (isFullscreen) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen
-                    ),
-                  contentDescription = stringResource(R.string.cd_fullscreen),
-                  tint = Color.White,
-                  modifier = Modifier.size(20.dp),
+                Text(
+                  text = "CH $dialedChannelInput",
+                  style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                  color = Color.White,
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
               }
             }
@@ -459,6 +606,9 @@ fun VideoPlayerStage(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
+                var isNextFocused by remember { mutableStateOf(false) }
+                var isRetryFocused by remember { mutableStateOf(false) }
+
                 Row(
                   horizontalArrangement = Arrangement.spacedBy(10.dp),
                   verticalAlignment = Alignment.CenterVertically,
@@ -469,8 +619,14 @@ fun VideoPlayerStage(
                       onNextChannel()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent, contentColor = Color.White),
+                    border = if (isNextFocused) BorderStroke(2.5.dp, Color.White) else null,
                     shape = RoundedCornerShape(999.dp),
-                    modifier = Modifier.height(42.dp).testTag("player_error_next_channel_button"),
+                    modifier =
+                      Modifier
+                        .height(42.dp)
+                        .focusRequester(errorNextFocusRequester)
+                        .onFocusChanged { isNextFocused = it.isFocused }
+                        .testTag("player_error_next_channel_button"),
                   ) {
                     Icon(
                       painter = painterResource(R.drawable.ic_skip_next),
@@ -485,13 +641,18 @@ fun VideoPlayerStage(
                   }
 
                   Surface(
-                    color = Color(0xFF1E2638),
+                    color = if (isRetryFocused) Color(0xFF28334A) else Color(0xFF1E2638),
                     shape = RoundedCornerShape(999.dp),
-                    border = BorderStroke(1.dp, Color(0xFF334155)),
+                    border =
+                      BorderStroke(
+                        width = if (isRetryFocused) 2.dp else 1.dp,
+                        color = if (isRetryFocused) OrangeAccent else Color(0xFF334155),
+                      ),
                     modifier =
                       Modifier
                         .height(42.dp)
                         .clip(RoundedCornerShape(999.dp))
+                        .onFocusChanged { isRetryFocused = it.isFocused }
                         .clickable {
                           interactionTick++
                           onRetry()
@@ -522,86 +683,202 @@ fun VideoPlayerStage(
           }
         }
 
-        // Bottom Broadcast Overlay: Exactly matching Screenshot_20261127-100720_6de627b1.jpg
-        Column(
-          modifier =
-            Modifier
-              .fillMaxWidth()
-              .align(Alignment.BottomCenter)
-              .background(
-                Brush.verticalGradient(
-                  0f to Color.Transparent,
-                  0.35f to Color.Black.copy(alpha = 0.68f),
-                  1f to Color.Black.copy(alpha = 0.94f),
-                )
-              )
-              .padding(horizontal = 16.dp, vertical = 12.dp),
+        // Bottom Broadcast Overlay (auto-hides in Fullscreen; stays visible in preview card)
+        AnimatedVisibility(
+          visible = !isFullscreen || controlsVisible || playbackStatus !is PlaybackStatus.Playing,
+          enter = fadeIn(tween(180)),
+          exit = fadeOut(tween(260)),
+          modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter),
         ) {
-          // Row 1: Orange Capsule [ • EN DIRECT ] + Channel Name
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
+          Column(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .background(
+                  Brush.verticalGradient(
+                    0f to Color.Transparent,
+                    0.35f to Color.Black.copy(alpha = 0.72f),
+                    1f to Color.Black.copy(alpha = 0.95f),
+                  )
+                )
+                .then(
+                  if (isFullscreen) {
+                    Modifier.safeDrawingPadding().padding(horizontal = 24.dp, vertical = 16.dp)
+                  } else {
+                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                  }
+                ),
           ) {
-            LiveBadge(isLive = playbackStatus is PlaybackStatus.Playing)
-            Spacer(modifier = Modifier.width(10.dp))
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              LiveBadge(isLive = playbackStatus is PlaybackStatus.Playing)
+              Spacer(modifier = Modifier.width(10.dp))
+              Text(
+                text = activeChannel?.displayTitle ?: "Rifi stream",
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
             Text(
-              text = activeChannel?.displayTitle ?: "Rifi stream",
-              style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-              color = Color.White,
+              text = programSubtitle,
+              style = MaterialTheme.typography.bodyMedium,
+              color = Color(0xFFD1D5DB),
               maxLines = 1,
               overflow = TextOverflow.Ellipsis,
             )
-          }
 
-          Spacer(modifier = Modifier.height(4.dp))
+            // Fullscreen TV-Remote & Touch Transport Controls Bar
+            if (isFullscreen) {
+              Spacer(modifier = Modifier.height(12.dp))
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                  HudActionButton(
+                    onClick = {
+                      interactionTick++
+                      onPreviousChannel()
+                    },
+                    onFocused = { interactionTick++ },
+                    iconRes = R.drawable.ic_skip_previous,
+                    contentDescription = stringResource(R.string.cd_previous_channel),
+                    buttonSize = 42.dp,
+                    modifier = Modifier.testTag("player_prev_button"),
+                  )
 
-          // Row 2: Subtitle / Current program
-          Text(
-            text = programSubtitle,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color(0xFFD1D5DB),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
+                  val isPlayingOrBuffering =
+                    playbackStatus is PlaybackStatus.Playing || playbackStatus is PlaybackStatus.Buffering
+                  HudActionButton(
+                    onClick = {
+                      interactionTick++
+                      onTogglePlayPause()
+                    },
+                    onFocused = { interactionTick++ },
+                    iconRes = if (isPlayingOrBuffering) R.drawable.ic_pause else null,
+                    imageVector = if (isPlayingOrBuffering) null else Icons.Rounded.PlayArrow,
+                    contentDescription = stringResource(R.string.cd_play_pause),
+                    isHighlighted = true,
+                    buttonSize = 46.dp,
+                    modifier =
+                      Modifier
+                        .focusRequester(playPauseFocusRequester)
+                        .testTag("player_play_pause_button"),
+                  )
 
-          Spacer(modifier = Modifier.height(8.dp))
+                  HudActionButton(
+                    onClick = {
+                      interactionTick++
+                      onNextChannel()
+                    },
+                    onFocused = { interactionTick++ },
+                    iconRes = R.drawable.ic_skip_next,
+                    contentDescription = stringResource(R.string.cd_next_channel),
+                    buttonSize = 42.dp,
+                    modifier = Modifier.testTag("player_next_button"),
+                  )
 
-          // Row 3: Progress Timeline (21:10 ━━━━━━ 23:25)
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Text(
-              text = "21:10",
-              style = MaterialTheme.typography.labelSmall,
-              color = Color(0xFF9CA3AF),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Box(
-              modifier =
-                Modifier
-                  .weight(1f)
-                  .height(3.dp)
-                  .clip(RoundedCornerShape(2.dp))
-                  .background(Color(0xFF374151))
-            ) {
-              Box(
-                modifier =
-                  Modifier
-                    .fillMaxWidth(0.38f)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(OrangeAccent)
-              )
+                  HudActionButton(
+                    onClick = {
+                      interactionTick++
+                      onToggleFavorite()
+                    },
+                    onFocused = { interactionTick++ },
+                    iconRes = if (isFavorite) R.drawable.ic_star else R.drawable.ic_star_border,
+                    contentDescription = stringResource(R.string.cd_favorite_toggle),
+                    tint = if (isFavorite) AmberFavorite else Color.White,
+                    buttonSize = 42.dp,
+                    modifier = Modifier.testTag("player_favorite_button"),
+                  )
+                }
+
+                if (isTelevision) {
+                  Text(
+                    text = stringResource(R.string.fullscreen_remote_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF94A3B8),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 12.dp),
+                  )
+                }
+              }
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-              text = "23:25",
-              style = MaterialTheme.typography.labelSmall,
-              color = Color(0xFF9CA3AF),
-            )
           }
         }
+      }
+    }
+  }
+}
+
+@Composable
+private fun HudActionButton(
+  onClick: () -> Unit,
+  contentDescription: String,
+  modifier: Modifier = Modifier,
+  onFocused: () -> Unit = {},
+  isHighlighted: Boolean = false,
+  tint: Color = Color.White,
+  buttonSize: Dp = 38.dp,
+  @DrawableRes iconRes: Int? = null,
+  imageVector: ImageVector? = null,
+) {
+  var isFocused by remember { mutableStateOf(false) }
+
+  Surface(
+    color =
+      when {
+        isFocused -> OrangeAccent.copy(alpha = 0.32f)
+        isHighlighted -> OrangeAccent.copy(alpha = 0.24f)
+        else -> Color(0xFF0F1420).copy(alpha = 0.72f)
+      },
+    shape = CircleShape,
+    border =
+      BorderStroke(
+        width = if (isFocused) 2.5.dp else 1.dp,
+        color =
+          when {
+            isFocused -> OrangeAccent
+            isHighlighted -> OrangeAccent.copy(alpha = 0.75f)
+            else -> Color.White.copy(alpha = 0.18f)
+          },
+      ),
+    modifier =
+      modifier
+        .size(buttonSize)
+        .clip(CircleShape)
+        .onFocusChanged {
+          isFocused = it.isFocused
+          if (it.isFocused) onFocused()
+        }
+        .clickable(onClick = onClick),
+  ) {
+    Box(contentAlignment = Alignment.Center) {
+      if (iconRes != null) {
+        Icon(
+          painter = painterResource(iconRes),
+          contentDescription = contentDescription,
+          tint = tint,
+          modifier = Modifier.size(buttonSize * 0.52f),
+        )
+      } else if (imageVector != null) {
+        Icon(
+          imageVector = imageVector,
+          contentDescription = contentDescription,
+          tint = tint,
+          modifier = Modifier.size(buttonSize * 0.58f),
+        )
       }
     }
   }

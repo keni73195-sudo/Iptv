@@ -95,6 +95,8 @@ class MainActivity : ComponentActivity() {
           onImportFromText = viewModel::importFromText,
           onResetDefaultPlaylist = viewModel::resetToDefaultPlaylist,
           onClearFeedbackBanner = viewModel::clearFeedbackBanner,
+          onToggleHideBroken = viewModel::toggleHideBrokenChannels,
+          onCycleSortMode = viewModel::cycleSortMode,
         )
       }
     }
@@ -103,6 +105,7 @@ class MainActivity : ComponentActivity() {
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     val vm = iptvViewModel
     if (vm != null && event.action == KeyEvent.ACTION_DOWN) {
+      val state = vm.uiState.value
       when (event.keyCode) {
         KeyEvent.KEYCODE_CHANNEL_UP,
         KeyEvent.KEYCODE_PAGE_UP,
@@ -124,13 +127,45 @@ class MainActivity : ComponentActivity() {
           vm.playerManager.resumeIfReady()
           return true
         }
-        KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+        KeyEvent.KEYCODE_MEDIA_PAUSE,
+        KeyEvent.KEYCODE_MEDIA_STOP -> {
           vm.playerManager.pause()
           return true
         }
         KeyEvent.KEYCODE_VOLUME_MUTE -> {
           vm.toggleMute()
           return true
+        }
+        KeyEvent.KEYCODE_INFO -> {
+          if (!state.isImportDialogOpen) {
+            vm.toggleFullscreen()
+            return true
+          }
+        }
+        KeyEvent.KEYCODE_MENU,
+        KeyEvent.KEYCODE_SETTINGS -> {
+          if (!state.isFullscreen && !state.isImportDialogOpen) {
+            vm.openImportDialog()
+            return true
+          }
+        }
+        KeyEvent.KEYCODE_BOOKMARK -> {
+          if (!state.isImportDialogOpen) {
+            vm.toggleActiveFavorite()
+            return true
+          }
+        }
+        in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> {
+          if (state.isFullscreen && !state.isImportDialogOpen) {
+            vm.onRemoteDigitPressed(event.keyCode - KeyEvent.KEYCODE_0)
+            return true
+          }
+        }
+        in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 -> {
+          if (state.isFullscreen && !state.isImportDialogOpen) {
+            vm.onRemoteDigitPressed(event.keyCode - KeyEvent.KEYCODE_NUMPAD_0)
+            return true
+          }
         }
       }
     }

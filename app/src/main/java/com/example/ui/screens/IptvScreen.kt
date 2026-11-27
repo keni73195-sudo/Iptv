@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
@@ -40,6 +41,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -54,6 +57,7 @@ import com.example.ui.components.BroadcastTopHeaderAndSearchBar
 import com.example.ui.components.CategoryFilterRow
 import com.example.ui.components.ChannelRowCard
 import com.example.ui.components.EmptyChannelsState
+import com.example.ui.components.GlobalCatalogView
 import com.example.ui.components.ImportPlaylistDialog
 import com.example.ui.components.NextProgramInfoCard
 import com.example.ui.components.VideoPlayerStage
@@ -76,6 +80,8 @@ fun IptvScreen(
   onExitFullscreen: () -> Unit,
   onCategorySelect: (ChannelCategory) -> Unit,
   onSearchQueryChange: (String) -> Unit,
+  onToggleHideBroken: () -> Unit,
+  onCycleSortMode: () -> Unit,
   onOpenImportDialog: () -> Unit,
   onCloseImportDialog: () -> Unit,
   onSyncAllSources: () -> Unit,
@@ -103,24 +109,20 @@ fun IptvScreen(
     }
   }
 
-  LaunchedEffect(uiState.selectedCategory, uiState.searchQuery) {
+  LaunchedEffect(uiState.selectedCategory, uiState.searchQuery, uiState.sortMode, uiState.hideBrokenChannels) {
     listState.scrollToItem(0)
   }
 
-  val channelCounts =
-    remember(uiState.allChannels, uiState.favoriteIds) {
-      val grouped = uiState.allChannels.groupingBy { it.category }.eachCount()
-      ChannelCategory.entries.associateWith { category ->
-        when (category) {
-          ChannelCategory.ALL -> uiState.allChannels.size
-          ChannelCategory.FAVORITES -> uiState.allChannels.count { it.id in uiState.favoriteIds }
-          else -> grouped[category] ?: 0
-        }
-      }
-    }
-
   val activeIsFavorite = uiState.activeChannel?.id?.let { it in uiState.favoriteIds } == true
   var selectedTab by remember { mutableStateOf("TV") }
+  val channelListFocusRequester = remember { FocusRequester() }
+
+  LaunchedEffect(isTelevision, uiState.isFullscreen, selectedTab) {
+    if (isTelevision && !uiState.isFullscreen && selectedTab == "TV" && uiState.filteredChannels.isNotEmpty()) {
+      kotlinx.coroutines.delay(120L)
+      runCatching { channelListFocusRequester.requestFocus() }
+    }
+  }
 
   if (uiState.isFullscreen) {
     BackHandler { onExitFullscreen() }
@@ -134,6 +136,8 @@ fun IptvScreen(
         liveResolutionLabel = uiState.liveResolutionLabel,
         aspectRatioMode = uiState.aspectRatioMode,
         isFullscreen = true,
+        isTelevision = isTelevision,
+        dialedChannelInput = uiState.dialedChannelInput,
         onTogglePlayPause = onTogglePlayPause,
         onRetry = onRetryPlayback,
         onToggleMute = onToggleMute,
@@ -146,6 +150,12 @@ fun IptvScreen(
       )
     }
   } else {
+    BackHandler(enabled = selectedTab != "TV") {
+      selectedTab = "TV"
+    }
+    BackHandler(enabled = selectedTab == "TV" && uiState.searchQuery.isNotEmpty()) {
+      onSearchQueryChange("")
+    }
     Scaffold(
       containerColor = MaterialTheme.colorScheme.background,
       snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -174,17 +184,13 @@ fun IptvScreen(
             )
       ) {
         Column(modifier = Modifier.fillMaxSize()) {
-          // Top Header: Brand "Rifi stream •" + Capsule Tabs + Profile / Search / Clock
           BroadcastTopHeaderAndSearchBar(
             searchQuery = uiState.searchQuery,
-            selectedCategory = uiState.selectedCategory,
             selectedTab = selectedTab,
-            channelCounts = channelCounts,
             filteredCount = uiState.filteredChannels.size,
             totalCount = uiState.allChannels.size,
             isSyncingSources = uiState.isSyncingSources,
             onSearchQueryChange = onSearchQueryChange,
-            onCategorySelect = onCategorySelect,
             onTabSelected = { selectedTab = it },
             onOpenImport = onOpenImportDialog,
           )
@@ -193,14 +199,34 @@ fun IptvScreen(
             val isWideLayout = maxWidth >= 600.dp || isTelevision
 
             when (selectedTab) {
+              "Global" -> {
+                GlobalCatalogView(
+                  channels = uiState.allChannels,
+                  favoriteIds = uiState.favoriteIds,
+                  brokenChannelIds = uiState.brokenChannelIds,
+                  hideBrokenChannels = uiState.hideBrokenChannels,
+                  sortMode = uiState.sortMode,
+                  activeChannelId = uiState.activeChannel?.id,
+                  onSelectChannel = { channel ->
+                    selectedTab = "TV"
+                    onSelectChannel(channel)
+                  },
+                  onToggleFavorite = onToggleFavorite,
+                  onToggleHideBroken = onToggleHideBroken,
+                  onCycleSortMode = onCycleSortMode,
+                  modifier = Modifier.fillMaxSize(),
+                )
+              }
               "Films", "Séries" -> {
                 VodCatalogView(
-                  onPlayMovie = onSelectChannel,
+                  onPlayMovie = { channel ->
+                    selectedTab = "TV"
+                    onSelectChannel(channel)
+                  },
                   modifier = Modifier.fillMaxSize(),
                 )
               }
               else -> {
-                // TV Tab: Exactly matching Screenshot_20261127-100720_6de627b1.jpg
                 if (isWideLayout) {
                   Row(
                     modifier =
@@ -210,30 +236,41 @@ fun IptvScreen(
                         .windowInsetsPadding(WindowInsets.navigationBars),
                     horizontalArrangement = Arrangement.spacedBy(16.dp),
                   ) {
-                    // LEFT COLUMN (~42%): Category pills + Channels List
+                    // LEFT COLUMN (~42%): Sort/Filter/Category pills + Channels List
                     Column(
                       modifier = Modifier.weight(0.42f).fillMaxHeight(),
                     ) {
                       CategoryFilterRow(
                         selectedCategory = uiState.selectedCategory,
+                        hideBrokenChannels = uiState.hideBrokenChannels,
+                        sortMode = uiState.sortMode,
+                        brokenCount = uiState.brokenChannelIds.size,
                         onCategorySelect = onCategorySelect,
+                        onToggleHideBroken = onToggleHideBroken,
+                        onCycleSortMode = onCycleSortMode,
                         modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                       )
 
                       ChannelListLazyColumn(
                         uiState = uiState,
                         listState = listState,
+                        isTelevision = isTelevision,
                         onSelectChannel = onSelectChannel,
                         onToggleFavorite = onToggleFavorite,
                         onResetFilters = {
                           onSearchQueryChange("")
                           onCategorySelect(ChannelCategory.ALL)
+                          if (uiState.hideBrokenChannels) onToggleHideBroken()
                         },
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        modifier =
+                          Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .focusRequester(channelListFocusRequester),
                       )
                     }
 
-                    // RIGHT COLUMN (~58%): Video Player Preview + Next Program Info Card
+                    // RIGHT COLUMN (~58%): Video Player Preview + Channel Info Card
                     Column(
                       modifier = Modifier.weight(0.58f).fillMaxHeight(),
                       verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -247,6 +284,7 @@ fun IptvScreen(
                         liveResolutionLabel = uiState.liveResolutionLabel,
                         aspectRatioMode = uiState.aspectRatioMode,
                         isFullscreen = false,
+                        isTelevision = isTelevision,
                         onTogglePlayPause = onTogglePlayPause,
                         onRetry = onRetryPlayback,
                         onToggleMute = onToggleMute,
@@ -264,12 +302,18 @@ fun IptvScreen(
 
                       NextProgramInfoCard(
                         activeChannel = uiState.activeChannel,
+                        playbackStatus = uiState.playbackStatus,
+                        liveResolutionLabel = uiState.liveResolutionLabel,
+                        isFavorite = activeIsFavorite,
+                        onToggleFavorite = { uiState.activeChannel?.let { onToggleFavorite(it.id) } },
+                        onToggleFullscreen = onToggleFullscreen,
+                        isCompact = false,
                         modifier = Modifier.fillMaxWidth(),
                       )
                     }
                   }
                 } else {
-                  // Portrait Layout (Handheld Phones)
+                  // Portrait Layout (Handheld Phones) — fully responsive so nothing is clipped
                   Column(
                     modifier =
                       Modifier
@@ -297,6 +341,7 @@ fun IptvScreen(
                       modifier =
                         Modifier
                           .fillMaxWidth()
+                          .heightIn(max = 205.dp)
                           .aspectRatio(16f / 9f)
                           .clip(RoundedCornerShape(16.dp)),
                     )
@@ -305,14 +350,25 @@ fun IptvScreen(
 
                     NextProgramInfoCard(
                       activeChannel = uiState.activeChannel,
+                      playbackStatus = uiState.playbackStatus,
+                      liveResolutionLabel = uiState.liveResolutionLabel,
+                      isFavorite = activeIsFavorite,
+                      onToggleFavorite = { uiState.activeChannel?.let { onToggleFavorite(it.id) } },
+                      onToggleFullscreen = onToggleFullscreen,
+                      isCompact = true,
                       modifier = Modifier.fillMaxWidth(),
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     CategoryFilterRow(
                       selectedCategory = uiState.selectedCategory,
+                      hideBrokenChannels = uiState.hideBrokenChannels,
+                      sortMode = uiState.sortMode,
+                      brokenCount = uiState.brokenChannelIds.size,
                       onCategorySelect = onCategorySelect,
+                      onToggleHideBroken = onToggleHideBroken,
+                      onCycleSortMode = onCycleSortMode,
                       modifier = Modifier.fillMaxWidth(),
                     )
 
@@ -321,11 +377,13 @@ fun IptvScreen(
                     ChannelListLazyColumn(
                       uiState = uiState,
                       listState = listState,
+                      isTelevision = isTelevision,
                       onSelectChannel = onSelectChannel,
                       onToggleFavorite = onToggleFavorite,
                       onResetFilters = {
                         onSearchQueryChange("")
                         onCategorySelect(ChannelCategory.ALL)
+                        if (uiState.hideBrokenChannels) onToggleHideBroken()
                       },
                       modifier = Modifier.weight(1f).fillMaxWidth(),
                     )
@@ -357,6 +415,7 @@ fun IptvScreen(
 private fun ChannelListLazyColumn(
   uiState: IptvUiState,
   listState: LazyListState,
+  isTelevision: Boolean,
   onSelectChannel: (Channel) -> Unit,
   onToggleFavorite: (String) -> Unit,
   onResetFilters: () -> Unit,
@@ -373,7 +432,7 @@ private fun ChannelListLazyColumn(
         EmptyChannelsState(
           isFavoritesFilter = uiState.selectedCategory == ChannelCategory.FAVORITES,
           onResetFilters =
-            if (uiState.searchQuery.isNotBlank() || uiState.selectedCategory != ChannelCategory.ALL) {
+            if (uiState.searchQuery.isNotBlank() || uiState.selectedCategory != ChannelCategory.ALL || uiState.hideBrokenChannels) {
               onResetFilters
             } else {
               null
@@ -392,6 +451,7 @@ private fun ChannelListLazyColumn(
           isPlaying = isSelected && uiState.playbackStatus is PlaybackStatus.Playing,
           isFavorite = channel.id in uiState.favoriteIds,
           isBroken = channel.id in uiState.brokenChannelIds,
+          isTelevision = isTelevision,
           onSelect = { onSelectChannel(channel) },
           onToggleFavorite = { onToggleFavorite(channel.id) },
         )

@@ -5,16 +5,20 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -22,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -29,10 +34,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -44,6 +55,7 @@ import com.example.model.Channel
 import com.example.model.ChannelCategory
 import com.example.ui.theme.InkPrimary
 import com.example.ui.theme.InkSecondary
+import com.example.ui.theme.OrangeAccent
 
 data class VodMovie(
   val id: String,
@@ -165,104 +177,120 @@ fun VodCatalogView(
   modifier: Modifier = Modifier,
 ) {
   val heroMovie = SAMPLE_VOD_MOVIES.first()
+  var infoMovie by remember { mutableStateOf<VodMovie?>(null) }
 
-  LazyColumn(
-    modifier = modifier.fillMaxSize().testTag("vod_catalog_view"),
-    contentPadding = PaddingValues(bottom = 32.dp),
-  ) {
-    // Hero Banner: matching Screenshot_20261127-100700_8f30a2ab.jpg
-    item(key = "vod_hero_banner") {
-      Box(
-        modifier =
-          Modifier
-            .fillMaxWidth()
-            .height(340.dp)
-            .background(
-              Brush.horizontalGradient(
-                listOf(
-                  Color(0xFF0F1420),
-                  Color(0xFF1E283C),
-                  Color(0xFF2E3A52),
-                )
-              )
-            ),
-      ) {
-        // Subtle decorative background graphic
+  BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    val isCompact = maxWidth < 600.dp
+
+    LazyColumn(
+      modifier =
+        Modifier
+          .fillMaxSize()
+          .windowInsetsPadding(WindowInsets.navigationBars)
+          .testTag("vod_catalog_view"),
+      contentPadding = PaddingValues(bottom = 32.dp),
+    ) {
+      // Hero Banner: responsive for both phone & TV
+      item(key = "vod_hero_banner") {
         Box(
           modifier =
             Modifier
-              .fillMaxSize()
+              .fillMaxWidth()
+              .height(if (isCompact) 250.dp else 330.dp)
               .background(
-                Brush.radialGradient(
-                  colors = listOf(Color(0xFF384666).copy(alpha = 0.45f), Color.Transparent),
-                  radius = 800f,
+                Brush.horizontalGradient(
+                  listOf(
+                    Color(0xFF0F1420),
+                    Color(0xFF1E283C),
+                    Color(0xFF2E3A52),
+                  )
                 )
-              )
-        )
-
-        Column(
-          modifier =
-            Modifier
-              .fillMaxSize()
-              .padding(start = 36.dp, end = 36.dp, top = 32.dp, bottom = 24.dp),
-          verticalArrangement = Arrangement.Bottom,
-        ) {
-          Text(
-            text = heroMovie.title,
-            style =
-              MaterialTheme.typography.displayMedium.copy(
-                fontWeight = FontWeight.Black,
-                letterSpacing = 10.sp,
               ),
-            color = Color.White,
+        ) {
+          Box(
+            modifier =
+              Modifier
+                .fillMaxSize()
+                .background(
+                  Brush.radialGradient(
+                    colors = listOf(Color(0xFF384666).copy(alpha = 0.45f), Color.Transparent),
+                    radius = 800f,
+                  )
+                )
           )
 
-          Spacer(modifier = Modifier.height(10.dp))
-
-          Row(verticalAlignment = Alignment.CenterVertically) {
+          Column(
+            modifier =
+              Modifier
+                .fillMaxSize()
+                .padding(
+                  horizontal = if (isCompact) 16.dp else 36.dp,
+                  vertical = if (isCompact) 18.dp else 24.dp,
+                ),
+            verticalArrangement = Arrangement.Bottom,
+          ) {
             Text(
-              text = heroMovie.year,
-              style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-              color = InkSecondary,
+              text = heroMovie.title,
+              style =
+                (if (isCompact) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.displayMedium)
+                  .copy(
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = if (isCompact) 6.sp else 10.sp,
+                  ),
+              color = Color.White,
             )
-            Spacer(modifier = Modifier.width(10.dp))
-            Surface(
-              color = Color(0xFF26334A),
-              shape = RoundedCornerShape(4.dp),
-            ) {
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
               Text(
-                text = heroMovie.badge,
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                color = InkPrimary,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                text = heroMovie.year,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = InkSecondary,
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Surface(
+                color = Color(0xFF26334A),
+                shape = RoundedCornerShape(4.dp),
+              ) {
+                Text(
+                  text = heroMovie.badge,
+                  style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                  color = InkPrimary,
+                  modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+              }
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(
+                text = heroMovie.duration,
+                style = MaterialTheme.typography.bodyMedium,
+                color = InkSecondary,
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(
+                text = heroMovie.category,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFFFF7A00),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
               )
             }
-            Spacer(modifier = Modifier.width(10.dp))
+
+            Spacer(modifier = Modifier.height(8.dp))
+
             Text(
-              text = heroMovie.duration,
+              text = heroMovie.synopsis,
               style = MaterialTheme.typography.bodyMedium,
-              color = InkSecondary,
+              color = Color(0xFFCBD5E1),
+              maxLines = 2,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.fillMaxWidth(if (isCompact) 1f else 0.68f),
             )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-              text = heroMovie.category,
-              style = MaterialTheme.typography.bodyMedium,
-              color = Color(0xFFFF7A00),
-            )
-          }
 
-          Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-          Text(
-            text = heroMovie.synopsis,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color(0xFFCBD5E1),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(0.68f),
-          )
-
-          Spacer(modifier = Modifier.height(18.dp))
+          var isHeroPlayFocused by remember { mutableStateOf(false) }
+          var isHeroInfoFocused by remember { mutableStateOf(false) }
 
           Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Button(
@@ -287,8 +315,13 @@ fun VodCatalogView(
                 )
               },
               colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
+              border = if (isHeroPlayFocused) BorderStroke(2.5.dp, OrangeAccent) else null,
               shape = RoundedCornerShape(999.dp),
-              modifier = Modifier.height(44.dp).testTag("vod_hero_play_button"),
+              modifier =
+                Modifier
+                  .height(44.dp)
+                  .onFocusChanged { isHeroPlayFocused = it.isFocused }
+                  .testTag("vod_hero_play_button"),
             ) {
               Icon(
                 imageVector = Icons.Rounded.PlayArrow,
@@ -303,11 +336,18 @@ fun VodCatalogView(
             }
 
             OutlinedButton(
-              onClick = {},
+              onClick = { infoMovie = heroMovie },
               colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
               shape = RoundedCornerShape(999.dp),
-              border = BorderStroke(1.dp, Color(0xFF334155)),
-              modifier = Modifier.height(44.dp),
+              border =
+                BorderStroke(
+                  width = if (isHeroInfoFocused) 2.dp else 1.dp,
+                  color = if (isHeroInfoFocused) OrangeAccent else Color(0xFF334155),
+                ),
+              modifier =
+                Modifier
+                  .height(44.dp)
+                  .onFocusChanged { isHeroInfoFocused = it.isFocused },
             ) {
               Icon(
                 imageVector = Icons.Rounded.Info,
@@ -411,6 +451,57 @@ fun VodCatalogView(
       }
     }
   }
+
+  infoMovie?.let { movie ->
+    AlertDialog(
+      onDismissRequest = { infoMovie = null },
+      containerColor = Color(0xFF131722),
+      titleContentColor = Color.White,
+      textContentColor = Color(0xFFCBD5E1),
+      title = { Text(text = movie.title, fontWeight = FontWeight.Bold) },
+      text = {
+        Column {
+          Text(text = "${movie.year} • ${movie.duration} • ${movie.category}", color = Color(0xFFFF7A00))
+          Spacer(modifier = Modifier.height(8.dp))
+          Text(text = movie.synopsis)
+        }
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            infoMovie = null
+            onPlayMovie(
+              Channel(
+                id = "vod_${movie.id}",
+                number = 1,
+                name = movie.title,
+                displayTitle = movie.title,
+                resolution = movie.badge,
+                tvgId = movie.id,
+                tvgLogo = null,
+                groupTitle = "Films & Séries",
+                userAgent = null,
+                referrer = null,
+                streamUrl = movie.streamUrl,
+                category = ChannelCategory.MOVIES,
+                monogram = movie.title.take(2),
+                accentIndex = 3,
+              )
+            )
+          },
+          colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
+        ) {
+          Text("Lecture")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { infoMovie = null }) {
+          Text("Fermer", color = Color(0xFF94A3B8))
+        }
+      },
+    )
+  }
+}
 }
 
 @Composable
@@ -419,15 +510,22 @@ private fun VodPosterCard(
   onClick: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
+  var isCardFocused by remember { mutableStateOf(false) }
+
   Surface(
     color = Color(0xFF131722),
     shape = RoundedCornerShape(14.dp),
-    border = BorderStroke(1.dp, Color(0xFF222838)),
+    border =
+      BorderStroke(
+        width = if (isCardFocused) 2.5.dp else 1.dp,
+        color = if (isCardFocused) OrangeAccent else Color(0xFF222838),
+      ),
     modifier =
       modifier
         .width(138.dp)
         .height(190.dp)
         .clip(RoundedCornerShape(14.dp))
+        .onFocusChanged { isCardFocused = it.isFocused }
         .clickable(onClick = onClick)
         .testTag("vod_card_${movie.id}"),
   ) {

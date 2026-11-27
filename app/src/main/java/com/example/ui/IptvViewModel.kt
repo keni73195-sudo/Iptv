@@ -10,6 +10,7 @@ import com.example.data.PlaylistRepository
 import com.example.model.AspectRatioMode
 import com.example.model.Channel
 import com.example.model.ChannelCategory
+import com.example.model.ChannelSortMode
 import com.example.model.PlaybackStatus
 import com.example.player.IptvPlayerManager
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,8 @@ data class IptvUiState(
   val searchQuery: String = "",
   val favoriteIds: Set<String> = emptySet(),
   val brokenChannelIds: Set<String> = emptySet(),
+  val hideBrokenChannels: Boolean = false,
+  val sortMode: ChannelSortMode = ChannelSortMode.CATEGORY,
   val playbackStatus: PlaybackStatus = PlaybackStatus.Idle,
   val isMuted: Boolean = false,
   val liveResolutionLabel: String? = null,
@@ -40,11 +43,14 @@ data class IptvUiState(
   val isSyncingSources: Boolean = false,
   val importError: String? = null,
   val feedbackBanner: String? = null,
+  val dialedChannelInput: String? = null,
 )
 
 private data class FilterControls(
   val selectedCategory: ChannelCategory,
   val searchQuery: String,
+  val hideBrokenChannels: Boolean,
+  val sortMode: ChannelSortMode,
   val aspectRatioMode: AspectRatioMode,
   val isFullscreen: Boolean,
 )
@@ -55,6 +61,7 @@ private data class DialogAndSyncControls(
   val isSyncingSources: Boolean,
   val importError: String?,
   val feedbackBanner: String?,
+  val dialedChannelInput: String?,
 )
 
 class IptvViewModel(application: Application) : AndroidViewModel(application) {
@@ -69,6 +76,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   private val _channels = MutableStateFlow<List<Channel>>(M3uParser.parse(DefaultPlaylists.BFM_M3U))
   private val _activeChannelId = MutableStateFlow<String?>(null)
   private val _brokenChannelIds = MutableStateFlow<Set<String>>(emptySet())
+  private val _hideBrokenChannels = MutableStateFlow(false)
+  private val _sortMode = MutableStateFlow(ChannelSortMode.CATEGORY)
   private val _selectedCategory = MutableStateFlow(ChannelCategory.ALL)
   private val _searchQuery = MutableStateFlow("")
   private val _aspectRatioMode = MutableStateFlow(AspectRatioMode.FIT)
@@ -78,25 +87,28 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   private val _isSyncingSources = MutableStateFlow(false)
   private val _importError = MutableStateFlow<String?>(null)
   private val _feedbackBanner = MutableStateFlow<String?>(null)
+  private val _dialedChannelInput = MutableStateFlow<String?>(null)
+  private var dialTimeoutJob: kotlinx.coroutines.Job? = null
 
   private val filterControlsFlow =
-    combine(_selectedCategory, _searchQuery, _aspectRatioMode, _isFullscreen) {
-      category,
-      query,
-      aspect,
-      fullscreen ->
-      FilterControls(category, query, aspect, fullscreen)
+    combine(
+      _selectedCategory,
+      _searchQuery,
+      _hideBrokenChannels,
+      _sortMode,
+      combine(_aspectRatioMode, _isFullscreen) { a, f -> a to f },
+    ) { category, query, hideBroken, sortMode, display ->
+      FilterControls(category, query, hideBroken, sortMode, display.first, display.second)
     }
 
   private val dialogControlsFlow =
     combine(
-      _isImportDialogOpen,
-      _isImporting,
-      _isSyncingSources,
+      combine(_isImportDialogOpen, _isImporting, _isSyncingSources) { o, i, s -> Triple(o, i, s) },
       _importError,
       _feedbackBanner,
-    ) { open, importing, syncing, error, banner ->
-      DialogAndSyncControls(open, importing, syncing, error, banner)
+      _dialedChannelInput,
+    ) { flags, error, banner, dialed ->
+      DialogAndSyncControls(flags.first, flags.second, flags.third, error, banner, dialed)
     }
 
   private val channelTagsFlow =
@@ -135,12 +147,30 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 channel.tvgId.contains(query, ignoreCase = true) ||
                 channel.groupTitle?.contains(query, ignoreCase = true) == true ||
                 channel.number.toString().padStart(2, '0').contains(query)
-            matchesCategory && matchesQuery
+            val matchesBroken = if (filters.hideBrokenChannels) channel.id !in brokenIds else true
+            matchesCategory && matchesQuery && matchesBroken
           }
 
-        // Automatic reordering: non-working / broken channels are moved to the bottom ("ira en bas")
-        val (workingChannels, brokenChannels) = filtered.partition { it.id !in brokenIds }
-        val orderedChannels = workingChannels + brokenChannels
+        val sorted =
+          when (filters.sortMode) {
+            ChannelSortMode.DEFAULT -> filtered
+            ChannelSortMode.CATEGORY ->
+              filtered.sortedWith(
+                compareBy<Channel> { categorySortOrder(it.category) }
+                  .thenBy { it.displayTitle.lowercase() }
+              )
+            ChannelSortMode.ALPHABETICAL ->
+              filtered.sortedBy { it.displayTitle.lowercase() }
+          }
+
+        // Automatic reordering: non-working / broken channels are always moved to the bottom ("ira en bas")
+        val orderedChannels =
+          if (filters.hideBrokenChannels) {
+            sorted
+          } else {
+            val (working, broken) = sorted.partition { it.id !in brokenIds }
+            working + broken
+          }
 
         IptvUiState(
           allChannels = channels,
@@ -150,6 +180,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
           searchQuery = filters.searchQuery,
           favoriteIds = favoriteIds,
           brokenChannelIds = brokenIds,
+          hideBrokenChannels = filters.hideBrokenChannels,
+          sortMode = filters.sortMode,
           playbackStatus = playerInfo.first,
           isMuted = playerInfo.second,
           liveResolutionLabel = playerInfo.third,
@@ -160,6 +192,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
           isSyncingSources = dialog.isSyncingSources,
           importError = dialog.importError,
           feedbackBanner = dialog.feedbackBanner,
+          dialedChannelInput = dialog.dialedChannelInput,
         )
       }
       .stateIn(
@@ -311,6 +344,59 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
   fun toggleFavorite(channelId: String) {
     viewModelScope.launch { repository.toggleFavorite(channelId) }
+  }
+
+  fun toggleActiveFavorite() {
+    val activeId = _activeChannelId.value ?: return
+    toggleFavorite(activeId)
+  }
+
+  fun onRemoteDigitPressed(digit: Int) {
+    if (digit !in 0..9) return
+    val current = _dialedChannelInput.value.orEmpty()
+    val updated = (current + digit.toString()).takeLast(3)
+    _dialedChannelInput.value = updated
+    dialTimeoutJob?.cancel()
+    dialTimeoutJob =
+      viewModelScope.launch {
+        kotlinx.coroutines.delay(1_200L)
+        val number = _dialedChannelInput.value?.toIntOrNull()
+        _dialedChannelInput.value = null
+        if (number != null && number > 0) {
+          val list = uiState.value.filteredChannels.ifEmpty { _channels.value }
+          val match =
+            list.firstOrNull { it.number == number }
+              ?: _channels.value.firstOrNull { it.number == number }
+              ?: list.getOrNull(number - 1)
+          if (match != null) {
+            selectChannel(match)
+          } else {
+            _feedbackBanner.value = "Chaîne n°$number introuvable"
+          }
+        }
+      }
+  }
+
+  fun toggleHideBrokenChannels() {
+    _hideBrokenChannels.value = !_hideBrokenChannels.value
+    _feedbackBanner.value =
+      if (_hideBrokenChannels.value) "Chaînes hors service masquées" else "Toutes les chaînes affichées"
+  }
+
+  fun cycleSortMode() {
+    val next =
+      when (_sortMode.value) {
+        ChannelSortMode.CATEGORY -> ChannelSortMode.ALPHABETICAL
+        ChannelSortMode.ALPHABETICAL -> ChannelSortMode.DEFAULT
+        ChannelSortMode.DEFAULT -> ChannelSortMode.CATEGORY
+      }
+    _sortMode.value = next
+    _feedbackBanner.value =
+      when (next) {
+        ChannelSortMode.CATEGORY -> "Classement : Par catégorie"
+        ChannelSortMode.ALPHABETICAL -> "Classement : A → Z"
+        ChannelSortMode.DEFAULT -> "Classement : Ordre d'origine"
+      }
   }
 
   fun openImportDialog() {
@@ -491,6 +577,18 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private const val MAX_FAILOVER_ATTEMPTS = 4
     private val qualitySuffixRegex =
       Regex("""\b(FHD|UHD|HD|SD|4K|H265|HEVC|FR)\b""", RegexOption.IGNORE_CASE)
+
+    private fun categorySortOrder(category: ChannelCategory): Int =
+      when (category) {
+        ChannelCategory.GENERAL -> 0
+        ChannelCategory.NEWS -> 1
+        ChannelCategory.MOVIES -> 2
+        ChannelCategory.SPORTS -> 3
+        ChannelCategory.KIDS -> 4
+        ChannelCategory.DOCUMENTARY -> 5
+        ChannelCategory.MUSIC -> 6
+        else -> 7
+      }
 
     internal fun normalizeChannelKey(title: String): String =
       title

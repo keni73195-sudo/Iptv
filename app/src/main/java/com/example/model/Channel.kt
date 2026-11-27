@@ -46,3 +46,9 @@ enum class AspectRatioMode {
   FILL,
   ZOOM,
 }
+
+enum class ChannelSortMode {
+  DEFAULT,
+  CATEGORY,
+  ALPHABETICAL,
+}

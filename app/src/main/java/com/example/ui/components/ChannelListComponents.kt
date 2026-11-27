@@ -3,18 +3,17 @@ package com.example.ui.components
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.annotation.DrawableRes
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,17 +25,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Clear
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -49,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -65,38 +67,56 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.model.Channel
 import com.example.model.ChannelCategory
+import com.example.model.ChannelSortMode
 import com.example.model.PlaybackStatus
 import com.example.ui.theme.AmberFavorite
 import com.example.ui.theme.BorderSlate
 import com.example.ui.theme.ControlSurface
-import com.example.ui.theme.CrimsonLive
-import com.example.ui.theme.CyanBroadcast
 import com.example.ui.theme.ElevatedCard
 import com.example.ui.theme.EmeraldReady
 import com.example.ui.theme.InkMuted
-import com.example.ui.theme.InkPrimary
 import com.example.ui.theme.InkSecondary
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.OrangeAccent
-import com.example.ui.theme.OrangeLive
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Calendar
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+
+@Composable
+fun rememberCurrentTimeText(): String {
+  var timeText by remember { mutableStateOf(formatCurrentTime()) }
+  LaunchedEffect(Unit) {
+    while (true) {
+      timeText = formatCurrentTime()
+      delay(15_000L)
+    }
+  }
+  return timeText
+}
+
+private fun formatCurrentTime(): String {
+  val cal = Calendar.getInstance()
+  return String.format(
+    Locale.getDefault(),
+    "%02d:%02d",
+    cal.get(Calendar.HOUR_OF_DAY),
+    cal.get(Calendar.MINUTE),
+  )
+}
 
 @Composable
 fun BroadcastTopHeaderAndSearchBar(
   searchQuery: String,
-  selectedCategory: ChannelCategory,
   selectedTab: String,
-  channelCounts: Map<ChannelCategory, Int>,
   filteredCount: Int,
   totalCount: Int,
   isSyncingSources: Boolean,
   onSearchQueryChange: (String) -> Unit,
-  onCategorySelect: (ChannelCategory) -> Unit,
   onTabSelected: (String) -> Unit,
   onOpenImport: () -> Unit,
   modifier: Modifier = Modifier,
@@ -108,243 +128,349 @@ fun BroadcastTopHeaderAndSearchBar(
     color = ObsidianBg.copy(alpha = 0.98f),
     modifier = modifier.fillMaxWidth(),
   ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-      // Top Rifi stream Header Row: Brand + Navigation Tabs + Profile / Search / Clock
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-      ) {
-        // Brand: Rifi stream •
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          modifier = Modifier.testTag("app_brand_header"),
-        ) {
-          Text(
-            text = "Rifi stream",
-            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-            color = Color.White,
-          )
-          Box(
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+      val isCompactHeader = maxWidth < 680.dp
+
+      Column(modifier = Modifier.fillMaxWidth()) {
+        if (isCompactHeader) {
+          // Phone / Compact layout: 2 tidy rows so nothing is clipped or hidden
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            BrandTitle()
+
+            HeaderRightActions(
+              isCompact = true,
+              isSearchActive = isSearchExpanded || searchQuery.isNotEmpty(),
+              isSyncingSources = isSyncingSources,
+              onToggleSearch = { isSearchExpanded = !isSearchExpanded },
+              onOpenImport = onOpenImport,
+            )
+          }
+
+          Row(
             modifier =
               Modifier
-                .padding(start = 3.dp, top = 6.dp)
-                .size(7.dp)
-                .clip(CircleShape)
-                .background(OrangeAccent)
-          )
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp)
+                .padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.Center,
+          ) {
+            NavigationTabsCapsule(
+              selectedTab = selectedTab,
+              isCompact = true,
+              onTabSelected = onTabSelected,
+            )
+          }
+        } else {
+          // Wide / TV / Tablet layout: single horizontal row matching reference screenshot
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            BrandTitle()
+
+            NavigationTabsCapsule(
+              selectedTab = selectedTab,
+              isCompact = false,
+              onTabSelected = onTabSelected,
+            )
+
+            HeaderRightActions(
+              isCompact = false,
+              isSearchActive = isSearchExpanded || searchQuery.isNotEmpty(),
+              isSyncingSources = isSyncingSources,
+              onToggleSearch = { isSearchExpanded = !isSearchExpanded },
+              onOpenImport = onOpenImport,
+            )
+          }
         }
 
-        // Top Navigation Capsule: TV, Guide, Films, Séries
-        Row(
-          modifier =
-            Modifier
-              .background(Color(0xFF131722), RoundedCornerShape(999.dp))
-              .border(1.dp, Color(0xFF222838), RoundedCornerShape(999.dp))
-              .padding(4.dp),
-          horizontalArrangement = Arrangement.spacedBy(4.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          val tabs = listOf("TV", "Guide", "Films", "Séries")
-          tabs.forEach { tab ->
-            val isSelected = selectedTab == tab
+        // Inline Search Bar when expanded or active
+        if (isSearchExpanded || searchQuery.isNotEmpty()) {
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
             Surface(
-              color = if (isSelected) Color(0xFF262C3A) else Color.Transparent,
-              shape = RoundedCornerShape(999.dp),
-              modifier =
-                Modifier
-                  .clip(RoundedCornerShape(999.dp))
-                  .clickable { onTabSelected(tab) }
-                  .testTag("tab_$tab"),
+              color = ControlSurface,
+              shape = RoundedCornerShape(12.dp),
+              border =
+                BorderStroke(
+                  width = 1.dp,
+                  color = if (isSearchFocused) OrangeAccent else BorderSlate,
+                ),
+              modifier = Modifier.weight(1f),
             ) {
-              Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+              Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
               ) {
-                Text(
-                  text = tab,
-                  style =
-                    MaterialTheme.typography.labelMedium.copy(
-                      fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                    ),
-                  color = if (isSelected) Color.White else Color(0xFF8A93A6),
+                Icon(
+                  imageVector = Icons.Rounded.Search,
+                  contentDescription = null,
+                  tint = if (isSearchFocused) OrangeAccent else InkSecondary,
+                  modifier = Modifier.size(18.dp),
                 )
-                if (isSelected) {
-                  Spacer(modifier = Modifier.height(2.dp))
-                  Box(
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                  if (searchQuery.isEmpty()) {
+                    Text(
+                      text = stringResource(R.string.search_placeholder),
+                      style = MaterialTheme.typography.bodyMedium,
+                      color = InkMuted,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                    )
+                  }
+                  BasicTextField(
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                    cursorBrush = SolidColor(OrangeAccent),
                     modifier =
                       Modifier
-                        .size(4.dp)
-                        .clip(CircleShape)
-                        .background(OrangeAccent)
+                        .fillMaxWidth()
+                        .onFocusChanged { isSearchFocused = it.isFocused }
+                        .testTag("channel_search_input"),
                   )
                 }
-              }
-            }
-          }
-        }
-
-        // Right side accessories: Profile [S] + Red dot + Search + Sun + Live Clock
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-          // Profile S badge
-          Surface(
-            color = Color(0xFFFF5B5B),
-            shape = CircleShape,
-            modifier = Modifier.size(32.dp),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Text(
-                text = "S",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                color = Color.White,
-              )
-            }
-          }
-
-          // Red notification dot
-          Box(
-            modifier =
-              Modifier
-                .size(6.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFFF3B30))
-          )
-
-          // Search action toggle button
-          Surface(
-            color = if (isSearchExpanded || searchQuery.isNotEmpty()) OrangeAccent.copy(alpha = 0.2f) else Color(0xFF131722),
-            shape = CircleShape,
-            border = BorderStroke(1.dp, if (isSearchExpanded || searchQuery.isNotEmpty()) OrangeAccent else Color(0xFF222838)),
-            modifier =
-              Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .clickable { isSearchExpanded = !isSearchExpanded }
-                .testTag("toggle_search_button"),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Icon(
-                imageVector = Icons.Rounded.Search,
-                contentDescription = stringResource(R.string.search_placeholder),
-                tint = if (isSearchExpanded || searchQuery.isNotEmpty()) OrangeAccent else Color(0xFF9CA3AF),
-                modifier = Modifier.size(16.dp),
-              )
-            }
-          }
-
-          // Sun / Display mode icon
-          Surface(
-            color = Color(0xFF131722),
-            shape = CircleShape,
-            border = BorderStroke(1.dp, Color(0xFF222838)),
-            modifier =
-              Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onOpenImport)
-                .testTag("header_m3u_button"),
-          ) {
-            Box(contentAlignment = Alignment.Center) {
-              Icon(
-                painter = painterResource(R.drawable.ic_public),
-                contentDescription = stringResource(R.string.cd_import_playlist),
-                tint = Color(0xFF9CA3AF),
-                modifier = Modifier.size(15.dp),
-              )
-            }
-          }
-
-          // Live Clock (HH:mm)
-          val timeText = remember {
-            val cal = Calendar.getInstance()
-            String.format("%02d:%02d", cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
-          }
-          Text(
-            text = timeText,
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = Color.White,
-          )
-        }
-      }
-
-      // Inline Search Bar when expanded or active
-      if (isSearchExpanded || searchQuery.isNotEmpty()) {
-        Row(
-          modifier =
-            Modifier
-              .fillMaxWidth()
-              .padding(horizontal = 20.dp, vertical = 4.dp),
-          verticalAlignment = Alignment.CenterVertically,
-        ) {
-          Surface(
-            color = ControlSurface,
-            shape = RoundedCornerShape(12.dp),
-            border =
-              BorderStroke(
-                width = 1.dp,
-                color = if (isSearchFocused) OrangeAccent else BorderSlate,
-              ),
-            modifier = Modifier.weight(1f),
-          ) {
-            Row(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              Icon(
-                imageVector = Icons.Rounded.Search,
-                contentDescription = null,
-                tint = if (isSearchFocused) OrangeAccent else InkSecondary,
-                modifier = Modifier.size(18.dp),
-              )
-              Spacer(modifier = Modifier.width(8.dp))
-              Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                if (searchQuery.isEmpty()) {
+                if (searchQuery.isNotEmpty()) {
+                  IconButton(
+                    onClick = { onSearchQueryChange("") },
+                    modifier = Modifier.size(28.dp).testTag("clear_search_button"),
+                  ) {
+                    Icon(
+                      imageVector = Icons.Rounded.Clear,
+                      contentDescription = stringResource(R.string.cd_clear_search),
+                      tint = InkSecondary,
+                      modifier = Modifier.size(16.dp),
+                    )
+                  }
+                } else {
                   Text(
-                    text = stringResource(R.string.search_placeholder),
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = "$filteredCount/$totalCount",
+                    style = MaterialTheme.typography.labelSmall,
                     color = InkMuted,
                   )
                 }
-                BasicTextField(
-                  value = searchQuery,
-                  onValueChange = onSearchQueryChange,
-                  singleLine = true,
-                  textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-                  cursorBrush = SolidColor(OrangeAccent),
-                  modifier =
-                    Modifier
-                      .fillMaxWidth()
-                      .onFocusChanged { isSearchFocused = it.isFocused }
-                      .testTag("channel_search_input"),
-                )
-              }
-              if (searchQuery.isNotEmpty()) {
-                IconButton(
-                  onClick = { onSearchQueryChange("") },
-                  modifier = Modifier.size(22.dp).testTag("clear_search_button"),
-                ) {
-                  Icon(
-                    imageVector = Icons.Rounded.Clear,
-                    contentDescription = stringResource(R.string.cd_clear_search),
-                    tint = InkSecondary,
-                    modifier = Modifier.size(15.dp),
-                  )
-                }
               }
             }
           }
         }
-      }
 
-      Spacer(
+        Spacer(
+          modifier =
+            Modifier
+              .fillMaxWidth()
+              .height(1.dp)
+              .background(Color(0xFF1E2433).copy(alpha = 0.55f))
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun BrandTitle() {
+  Row(
+    verticalAlignment = Alignment.CenterVertically,
+    modifier = Modifier.testTag("app_brand_header"),
+  ) {
+    Text(
+      text = stringResource(R.string.app_name),
+      style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+      color = Color.White,
+      maxLines = 1,
+    )
+    Box(
+      modifier =
+        Modifier
+          .padding(start = 3.dp, top = 6.dp)
+          .size(7.dp)
+          .clip(CircleShape)
+          .background(OrangeAccent)
+    )
+  }
+}
+
+@Composable
+private fun NavigationTabsCapsule(
+  selectedTab: String,
+  isCompact: Boolean,
+  onTabSelected: (String) -> Unit,
+) {
+  val tabs = listOf("TV", "Global", "Films", "Séries")
+  Row(
+    modifier =
+      Modifier
+        .horizontalScroll(rememberScrollState())
+        .background(Color(0xFF131722), RoundedCornerShape(999.dp))
+        .border(1.dp, Color(0xFF222838), RoundedCornerShape(999.dp))
+        .padding(4.dp),
+    horizontalArrangement = Arrangement.spacedBy(4.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    tabs.forEach { tab ->
+      val isSelected = selectedTab == tab
+      var isTabFocused by remember { mutableStateOf(false) }
+      Surface(
+        color = if (isSelected) Color(0xFF262C3A) else Color.Transparent,
+        shape = RoundedCornerShape(999.dp),
+        border =
+          if (isTabFocused) BorderStroke(1.5.dp, OrangeAccent) else null,
         modifier =
           Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(Color(0xFF1E2433).copy(alpha = 0.5f))
+            .clip(RoundedCornerShape(999.dp))
+            .onFocusChanged { isTabFocused = it.isFocused }
+            .clickable { onTabSelected(tab) }
+            .testTag("tab_$tab"),
+      ) {
+        Column(
+          modifier =
+            Modifier.padding(
+              horizontal = if (isCompact) 13.dp else 16.dp,
+              vertical = if (isCompact) 6.dp else 7.dp,
+            ),
+          horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+          Text(
+            text = tab,
+            style =
+              MaterialTheme.typography.labelMedium.copy(
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+              ),
+            color = if (isSelected) Color.White else Color(0xFF8A93A6),
+            maxLines = 1,
+          )
+          if (isSelected) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Box(
+              modifier =
+                Modifier
+                  .size(4.dp)
+                  .clip(CircleShape)
+                  .background(OrangeAccent)
+            )
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun HeaderRightActions(
+  isCompact: Boolean,
+  isSearchActive: Boolean,
+  isSyncingSources: Boolean,
+  onToggleSearch: () -> Unit,
+  onOpenImport: () -> Unit,
+) {
+  var isSearchBtnFocused by remember { mutableStateOf(false) }
+  var isImportBtnFocused by remember { mutableStateOf(false) }
+  val timeText = rememberCurrentTimeText()
+
+  Row(
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    if (!isCompact) {
+      Surface(
+        color = Color(0xFFFF5B5B),
+        shape = CircleShape,
+        modifier = Modifier.size(32.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Text(
+            text = "S",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = Color.White,
+          )
+        }
+      }
+    }
+
+    // Search action toggle button
+    Surface(
+      color =
+        when {
+          isSearchBtnFocused -> OrangeAccent.copy(alpha = 0.28f)
+          isSearchActive -> OrangeAccent.copy(alpha = 0.2f)
+          else -> Color(0xFF131722)
+        },
+      shape = CircleShape,
+      border =
+        BorderStroke(
+          width = if (isSearchBtnFocused) 2.dp else 1.dp,
+          color = if (isSearchBtnFocused || isSearchActive) OrangeAccent else Color(0xFF222838),
+        ),
+      modifier =
+        Modifier
+          .size(36.dp)
+          .clip(CircleShape)
+          .onFocusChanged { isSearchBtnFocused = it.isFocused }
+          .clickable(onClick = onToggleSearch)
+          .testTag("toggle_search_button"),
+    ) {
+      Box(contentAlignment = Alignment.Center) {
+        Icon(
+          imageVector = Icons.Rounded.Search,
+          contentDescription = stringResource(R.string.search_placeholder),
+          tint = if (isSearchBtnFocused || isSearchActive) OrangeAccent else Color(0xFF9CA3AF),
+          modifier = Modifier.size(17.dp),
+        )
+      }
+    }
+
+    // M3U / Sources import button
+    Surface(
+      color = if (isImportBtnFocused) OrangeAccent.copy(alpha = 0.28f) else Color(0xFF131722),
+      shape = CircleShape,
+      border =
+        BorderStroke(
+          width = if (isImportBtnFocused) 2.dp else 1.dp,
+          color = if (isImportBtnFocused) OrangeAccent else Color(0xFF222838),
+        ),
+      modifier =
+        Modifier
+          .size(36.dp)
+          .clip(CircleShape)
+          .onFocusChanged { isImportBtnFocused = it.isFocused }
+          .clickable(onClick = onOpenImport)
+          .testTag("header_m3u_button"),
+    ) {
+      Box(contentAlignment = Alignment.Center) {
+        if (isSyncingSources) {
+          CircularProgressIndicator(
+            color = OrangeAccent,
+            strokeWidth = 2.dp,
+            modifier = Modifier.size(16.dp),
+          )
+        } else {
+          Icon(
+            painter = painterResource(R.drawable.ic_playlist_add),
+            contentDescription = stringResource(R.string.cd_import_playlist),
+            tint = if (isImportBtnFocused) OrangeAccent else Color(0xFF9CA3AF),
+            modifier = Modifier.size(17.dp),
+          )
+        }
+      }
+    }
+
+    if (!isCompact) {
+      Text(
+        text = timeText,
+        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+        color = Color.White,
+        modifier = Modifier.testTag("header_live_clock"),
       )
     }
   }
@@ -353,27 +479,127 @@ fun BroadcastTopHeaderAndSearchBar(
 @Composable
 fun CategoryFilterRow(
   selectedCategory: ChannelCategory,
+  hideBrokenChannels: Boolean,
+  sortMode: ChannelSortMode,
+  brokenCount: Int,
   onCategorySelect: (ChannelCategory) -> Unit,
+  onToggleHideBroken: () -> Unit,
+  onCycleSortMode: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val categories =
     listOf(
-      ChannelCategory.FAVORITES,
       ChannelCategory.ALL,
-      ChannelCategory.MOVIES,
+      ChannelCategory.FAVORITES,
+      ChannelCategory.GENERAL,
       ChannelCategory.NEWS,
-      ChannelCategory.KIDS,
-      ChannelCategory.MUSIC,
+      ChannelCategory.MOVIES,
       ChannelCategory.SPORTS,
+      ChannelCategory.KIDS,
       ChannelCategory.DOCUMENTARY,
+      ChannelCategory.MUSIC,
     )
 
   LazyRow(
-    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
     verticalAlignment = Alignment.CenterVertically,
     modifier = modifier.fillMaxWidth().testTag("category_filter_row"),
   ) {
+    // 1. Hide / Show broken channels toggle button
+    item(key = "toggle_hide_broken") {
+      var isFocused by remember { mutableStateOf(false) }
+      Surface(
+        color = if (hideBrokenChannels) OrangeAccent.copy(alpha = 0.22f) else Color(0xFF1A2030),
+        shape = RoundedCornerShape(999.dp),
+        border =
+          BorderStroke(
+            width = if (isFocused) 1.5.dp else 1.dp,
+            color =
+              when {
+                isFocused -> Color.White
+                hideBrokenChannels -> OrangeAccent
+                else -> Color(0xFF334155)
+              },
+          ),
+        modifier =
+          Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .onFocusChanged { isFocused = it.isFocused }
+            .clickable(onClick = onToggleHideBroken)
+            .testTag("toggle_hide_broken_button"),
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Icon(
+            painter = painterResource(if (hideBrokenChannels) R.drawable.ic_tv_off else R.drawable.ic_filter_list),
+            contentDescription = null,
+            tint = if (hideBrokenChannels) OrangeAccent else Color(0xFF9CA3AF),
+            modifier = Modifier.size(15.dp),
+          )
+          Spacer(modifier = Modifier.width(6.dp))
+          Text(
+            text =
+              when {
+                hideBrokenChannels && brokenCount > 0 -> "HS masquées ($brokenCount)"
+                hideBrokenChannels -> "HS masquées"
+                brokenCount > 0 -> "Masquer HS ($brokenCount)"
+                else -> "Masquer HS"
+              },
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = if (hideBrokenChannels) Color.White else Color(0xFFCBD5E1),
+          )
+        }
+      }
+    }
+
+    // 2. Clean Sort Mode button
+    item(key = "cycle_sort_mode") {
+      var isFocused by remember { mutableStateOf(false) }
+      val sortLabel =
+        when (sortMode) {
+          ChannelSortMode.CATEGORY -> "Tri : Catégorie"
+          ChannelSortMode.ALPHABETICAL -> "Tri : A–Z"
+          ChannelSortMode.DEFAULT -> "Tri : Défaut"
+        }
+      Surface(
+        color = Color(0xFF1A2030),
+        shape = RoundedCornerShape(999.dp),
+        border =
+          BorderStroke(
+            width = if (isFocused) 1.5.dp else 1.dp,
+            color = if (isFocused) OrangeAccent else Color(0xFF334155),
+          ),
+        modifier =
+          Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .onFocusChanged { isFocused = it.isFocused }
+            .clickable(onClick = onCycleSortMode)
+            .testTag("cycle_sort_button"),
+      ) {
+        Row(
+          modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Icon(
+            painter = painterResource(R.drawable.ic_sort),
+            contentDescription = null,
+            tint = OrangeAccent,
+            modifier = Modifier.size(15.dp),
+          )
+          Spacer(modifier = Modifier.width(6.dp))
+          Text(
+            text = sortLabel,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = Color.White,
+          )
+        }
+      }
+    }
+
+    // 3. Category Filter Pills
     items(categories) { category ->
       val isSelected = category == selectedCategory
       var isChipFocused by remember { mutableStateOf(false) }
@@ -382,13 +608,13 @@ fun CategoryFilterRow(
         when (category) {
           ChannelCategory.FAVORITES -> "★ Mes chaînes"
           ChannelCategory.ALL -> "Toutes"
+          ChannelCategory.GENERAL -> "Général"
           ChannelCategory.MOVIES -> "Cinéma"
           ChannelCategory.NEWS -> "Info"
           ChannelCategory.KIDS -> "Jeunesse"
           ChannelCategory.MUSIC -> "Musique"
           ChannelCategory.SPORTS -> "Sport"
           ChannelCategory.DOCUMENTARY -> "Docs"
-          else -> category.name
         }
 
       Surface(
@@ -430,6 +656,7 @@ fun CategoryFilterRow(
   }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChannelRowCard(
   channel: Channel,
@@ -437,6 +664,7 @@ fun ChannelRowCard(
   isPlaying: Boolean,
   isFavorite: Boolean,
   isBroken: Boolean = false,
+  isTelevision: Boolean = false,
   onSelect: () -> Unit,
   onToggleFavorite: () -> Unit,
   modifier: Modifier = Modifier,
@@ -444,29 +672,37 @@ fun ChannelRowCard(
   var isCardFocused by remember { mutableStateOf(false) }
   val active = isSelected || isCardFocused
 
-  // In Screenshot_20261127-100720_6de627b1.jpg, active channel is solid pure white capsule!
   val cardBg = if (active) Color.White else Color(0xFF131722).copy(alpha = 0.85f)
   val numberColor = if (active) Color(0xFF4B5563) else if (isBroken) Color(0xFF64748B) else Color(0xFF6B7280)
   val titleColor = if (active) Color(0xFF111827) else if (isBroken) Color(0xFF94A3B8) else Color.White
-  val borderColor = if (isCardFocused && !isSelected) OrangeAccent else if (active) Color.Transparent else Color(0xFF1E2433)
+  val subColor = if (active) Color(0xFF4B5563) else Color(0xFF6B7280)
+  val borderColor =
+    when {
+      isCardFocused -> OrangeAccent
+      isSelected -> Color.Transparent
+      else -> Color(0xFF1E2433)
+    }
 
   Surface(
     color = cardBg,
     shape = RoundedCornerShape(14.dp),
-    border = BorderStroke(if (isCardFocused && !isSelected) 2.dp else 1.dp, borderColor),
+    border = BorderStroke(if (isCardFocused) 2.5.dp else 1.dp, borderColor),
     modifier =
       modifier
         .fillMaxWidth()
         .clip(RoundedCornerShape(14.dp))
         .onFocusChanged { isCardFocused = it.isFocused }
-        .clickable(onClick = onSelect)
+        .combinedClickable(
+          onClick = onSelect,
+          onLongClick = onToggleFavorite,
+        )
         .testTag("channel_card_${channel.number}"),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+      modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      // Channel Number (e.g. 1, 2, 3...)
+      // Channel Number
       Text(
         text = channel.number.toString(),
         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
@@ -477,53 +713,69 @@ fun ChannelRowCard(
       // Channel Logo Badge / Monogram
       ChannelEmblem(
         channelNumber = channel.number,
-        displayTitle = channel.displayTitle,
         monogram = channel.monogram,
         logoUrl = channel.tvgLogo,
-        category = channel.category,
-        isSelected = active,
       )
 
       Spacer(modifier = Modifier.width(12.dp))
 
-      // Channel Name + Offline Tag
-      Row(
-        modifier = Modifier.weight(1f),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Text(
-          text = channel.displayTitle,
-          style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-          color = titleColor,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-          modifier = Modifier.weight(1f, fill = false),
-        )
+      // Channel Name + Category / Offline Tag
+      Column(modifier = Modifier.weight(1f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text(
+            text = channel.displayTitle,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = titleColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+          )
 
-        if (isBroken) {
-          Spacer(modifier = Modifier.width(8.dp))
-          Surface(
-            color = Color(0xFFEF4444).copy(alpha = if (active) 0.14f else 0.20f),
-            shape = RoundedCornerShape(4.dp),
-            border = BorderStroke(0.8.dp, Color(0xFFEF4444).copy(alpha = 0.5f)),
-          ) {
-            Text(
-              text = stringResource(R.string.channel_offline_badge),
-              style = MaterialTheme.typography.labelSmall,
-              color = if (active) Color(0xFFDC2626) else Color(0xFFFCA5A5),
-              modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-            )
+          if (isBroken) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+              color = Color(0xFFEF4444).copy(alpha = if (active) 0.14f else 0.20f),
+              shape = RoundedCornerShape(4.dp),
+              border = BorderStroke(0.8.dp, Color(0xFFEF4444).copy(alpha = 0.5f)),
+            ) {
+              Text(
+                text = stringResource(R.string.channel_offline_badge),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (active) Color(0xFFDC2626) else Color(0xFFFCA5A5),
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+              )
+            }
           }
         }
+
+        val categoryName = categoryLabel(channel.category)
+        Text(
+          text = categoryName,
+          style = MaterialTheme.typography.labelSmall,
+          color = subColor,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
       }
 
-      if (isFavorite) {
-        Spacer(modifier = Modifier.width(6.dp))
+      IconButton(
+        onClick = onToggleFavorite,
+        modifier =
+          Modifier
+            .minimumInteractiveComponentSize()
+            .focusProperties { canFocus = !isTelevision }
+            .testTag("favorite_button_${channel.number}"),
+      ) {
         Icon(
-          painter = painterResource(R.drawable.ic_star),
+          painter = painterResource(if (isFavorite) R.drawable.ic_star else R.drawable.ic_star_border),
           contentDescription = stringResource(R.string.cd_favorite_toggle),
-          tint = if (active) Color(0xFFF59E0B) else AmberFavorite,
-          modifier = Modifier.size(18.dp),
+          tint =
+            when {
+              isFavorite -> AmberFavorite
+              active -> Color(0xFF6B7280)
+              else -> Color(0xFF475569)
+            },
+          modifier = Modifier.size(19.dp),
         )
       }
     }
@@ -533,41 +785,78 @@ fun ChannelRowCard(
 @Composable
 fun NextProgramInfoCard(
   activeChannel: Channel?,
+  playbackStatus: PlaybackStatus,
+  liveResolutionLabel: String?,
+  isFavorite: Boolean,
+  onToggleFavorite: () -> Unit,
+  onToggleFullscreen: () -> Unit,
+  isCompact: Boolean = false,
   modifier: Modifier = Modifier,
 ) {
-  val programTitle =
-    remember(activeChannel?.id) {
-      when (activeChannel?.category) {
-        ChannelCategory.MOVIES -> "Le Journal du cinéma & Grand Film"
-        ChannelCategory.NEWS -> "Le Journal de la nuit"
-        ChannelCategory.SPORTS -> "Le Grand Soir Football"
-        ChannelCategory.KIDS -> "Les Aventures du soir"
-        ChannelCategory.DOCUMENTARY -> "Planète Sauvage • Épisode 3"
-        ChannelCategory.MUSIC -> "Top Hits & Live Concert"
-        else -> "Le Journal de la nuit"
-      }
+  val statusLabel =
+    when (playbackStatus) {
+      is PlaybackStatus.Playing -> "EN DIRECT"
+      is PlaybackStatus.Buffering -> stringResource(R.string.buffering_status)
+      is PlaybackStatus.Paused -> stringResource(R.string.paused_status)
+      is PlaybackStatus.Error -> stringResource(R.string.channel_offline_badge)
+      PlaybackStatus.Idle -> "Prêt à lire"
     }
+  val statusColor =
+    when (playbackStatus) {
+      is PlaybackStatus.Playing -> EmeraldReady
+      is PlaybackStatus.Error -> Color(0xFFEF4444)
+      is PlaybackStatus.Buffering -> OrangeAccent
+      else -> InkSecondary
+    }
+  val categoryText = activeChannel?.let { categoryLabel(it.category) } ?: "TV en direct"
+  val resText = liveResolutionLabel ?: activeChannel?.resolution
 
   Surface(
     color = Color(0xFF131722),
-    shape = RoundedCornerShape(18.dp),
+    shape = RoundedCornerShape(if (isCompact) 14.dp else 18.dp),
     border = BorderStroke(1.dp, Color(0xFF222838)),
     modifier = modifier.fillMaxWidth().testTag("next_program_info_card"),
   ) {
     Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+      modifier =
+        Modifier
+          .fillMaxWidth()
+          .padding(horizontal = if (isCompact) 14.dp else 20.dp, vertical = if (isCompact) 10.dp else 14.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.SpaceBetween,
     ) {
       Column(modifier = Modifier.weight(1f)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text(
+            text = statusLabel,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            color = statusColor,
+          )
+          Text(
+            text = "  •  $categoryText",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFF8A93A6),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+          if (!resText.isNullOrBlank()) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+              color = Color(0xFF1E2638),
+              shape = RoundedCornerShape(4.dp),
+            ) {
+              Text(
+                text = resText,
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+              )
+            }
+          }
+        }
+        Spacer(modifier = Modifier.height(2.dp))
         Text(
-          text = "Ensuite • 23:25",
-          style = MaterialTheme.typography.labelMedium,
-          color = Color(0xFF8A93A6),
-        )
-        Spacer(modifier = Modifier.height(3.dp))
-        Text(
-          text = programTitle,
+          text = activeChannel?.displayTitle ?: stringResource(R.string.app_name),
           style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
           color = Color.White,
           maxLines = 1,
@@ -575,11 +864,67 @@ fun NextProgramInfoCard(
         )
       }
 
-      Text(
-        text = "OK plein écran  •  Maintenir OK : Mes chaînes",
-        style = MaterialTheme.typography.bodySmall,
-        color = Color(0xFF6B7280),
-      )
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        if (!isCompact) {
+          Text(
+            text = stringResource(R.string.tv_remote_fullscreen_hint),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF64748B),
+            maxLines = 1,
+          )
+        }
+
+        if (activeChannel != null) {
+          var isFavFocused by remember { mutableStateOf(false) }
+          Surface(
+            color = if (isFavFocused) OrangeAccent.copy(alpha = 0.25f) else Color.Transparent,
+            shape = CircleShape,
+            border = if (isFavFocused) BorderStroke(2.dp, OrangeAccent) else null,
+            modifier =
+              Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .onFocusChanged { isFavFocused = it.isFocused }
+                .clickable(onClick = onToggleFavorite)
+                .testTag("info_favorite_button"),
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              Icon(
+                painter = painterResource(if (isFavorite) R.drawable.ic_star else R.drawable.ic_star_border),
+                contentDescription = stringResource(R.string.cd_favorite_toggle),
+                tint = if (isFavorite) AmberFavorite else if (isFavFocused) Color.White else Color(0xFF9CA3AF),
+                modifier = Modifier.size(20.dp),
+              )
+            }
+          }
+        }
+
+        var isFsFocused by remember { mutableStateOf(false) }
+        Surface(
+          color = if (isFsFocused) OrangeAccent.copy(alpha = 0.25f) else Color.Transparent,
+          shape = CircleShape,
+          border = if (isFsFocused) BorderStroke(2.dp, OrangeAccent) else null,
+          modifier =
+            Modifier
+              .size(40.dp)
+              .clip(CircleShape)
+              .onFocusChanged { isFsFocused = it.isFocused }
+              .clickable(onClick = onToggleFullscreen)
+              .testTag("info_fullscreen_button"),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              painter = painterResource(R.drawable.ic_fullscreen),
+              contentDescription = stringResource(R.string.cd_fullscreen),
+              tint = if (isFsFocused) OrangeAccent else Color.White,
+              modifier = Modifier.size(20.dp),
+            )
+          }
+        }
+      }
     }
   }
 }
@@ -650,24 +995,19 @@ private object ChannelLogoCache {
 @Composable
 private fun ChannelEmblem(
   channelNumber: Int,
-  displayTitle: String,
   monogram: String,
   logoUrl: String?,
-  category: ChannelCategory,
-  isSelected: Boolean,
 ) {
-  // Vibrant palette matching the reference screenshot:
-  // Channel 1: Orange, Channel 2: Crimson/Red, Channel 3: Blue, Channel 4: Amber, Channel 5: Teal, etc.
   val badgeColor =
     when ((channelNumber - 1) % 8) {
-      0 -> Color(0xFFFF6600) // Vibrant orange (like Lumen 1 in screenshot)
-      1 -> Color(0xFFE11D48) // Ciné Club Red
-      2 -> Color(0xFF2563EB) // Info Blue
-      3 -> Color(0xFFD97706) // Kids Amber
-      4 -> Color(0xFF0D9488) // Docs Teal
-      5 -> Color(0xFF7C3AED) // Musique Purple
-      6 -> Color(0xFF16A34A) // Nature Green
-      7 -> Color(0xFFDB2777) // Séries Pink
+      0 -> Color(0xFFFF6600)
+      1 -> Color(0xFFE11D48)
+      2 -> Color(0xFF2563EB)
+      3 -> Color(0xFFD97706)
+      4 -> Color(0xFF0D9488)
+      5 -> Color(0xFF7C3AED)
+      6 -> Color(0xFF16A34A)
+      7 -> Color(0xFFDB2777)
       else -> Color(0xFFFF6600)
     }
 
@@ -757,5 +1097,29 @@ fun EmptyChannelsState(
       color = InkSecondary,
       textAlign = TextAlign.Center,
     )
+    if (onResetFilters != null) {
+      Spacer(modifier = Modifier.height(14.dp))
+      OutlinedButton(
+        onClick = onResetFilters,
+        border = BorderStroke(1.dp, OrangeAccent.copy(alpha = 0.7f)),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = OrangeAccent),
+      ) {
+        Text(text = stringResource(R.string.reset_filters))
+      }
+    }
   }
 }
+
+@Composable
+fun categoryLabel(category: ChannelCategory): String =
+  when (category) {
+    ChannelCategory.ALL -> stringResource(R.string.filter_all)
+    ChannelCategory.FAVORITES -> stringResource(R.string.filter_favorites)
+    ChannelCategory.NEWS -> stringResource(R.string.filter_news)
+    ChannelCategory.SPORTS -> stringResource(R.string.filter_sports)
+    ChannelCategory.MOVIES -> stringResource(R.string.filter_movies)
+    ChannelCategory.KIDS -> stringResource(R.string.filter_kids)
+    ChannelCategory.DOCUMENTARY -> stringResource(R.string.filter_documentary)
+    ChannelCategory.MUSIC -> stringResource(R.string.filter_music)
+    ChannelCategory.GENERAL -> stringResource(R.string.filter_general)
+  }

@@ -8,6 +8,8 @@
     <string name="channel_offline_badge">Hors service</string>
     <string name="btn_next_channel">Chaîne suivante</string>
     <string name="retry_button">Réessayer</string>
+    <string name="hide_broken_filter">Masquer hors service</string>
+    <string name="show_all_filter">Toutes les chaînes</string>
     <string name="search_placeholder">Rechercher une chaîne…</string>
     <string name="filter_all">Toutes</string>
     <string name="filter_favorites">Mes chaînes</string>
@@ -20,6 +22,7 @@
     <string name="filter_general">Général &amp; TV</string>
     <string name="next_program_label">Ensuite</string>
     <string name="tv_remote_fullscreen_hint">OK plein écran  •  Maintenir OK : Mes chaînes</string>
+    <string name="fullscreen_remote_hint">▲▼ Chaîne  •  OK Contrôles  •  Retour Quitter</string>
     <string name="empty_favorites_title">Aucun favori pour l\'instant</string>
     <string name="empty_favorites_subtitle">Touchez l\'étoile sur une chaîne pour l\'épingler ici.</string>
     <string name="empty_search_title">Aucune chaîne trouvée</string>
