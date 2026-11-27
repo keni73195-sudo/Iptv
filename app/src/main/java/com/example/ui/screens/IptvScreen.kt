@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -56,6 +57,7 @@ import com.example.ui.IptvUiState
 import com.example.ui.components.BroadcastTopHeaderAndSearchBar
 import com.example.ui.components.CategoryFilterRow
 import com.example.ui.components.ChannelRowCard
+import com.example.ui.components.ContinueWatchingSection
 import com.example.ui.components.EmptyChannelsState
 import com.example.ui.components.GlobalCatalogView
 import com.example.ui.components.ImportPlaylistDialog
@@ -89,6 +91,7 @@ fun IptvScreen(
   onImportFromText: (String, Boolean) -> Unit,
   onResetDefaultPlaylist: () -> Unit,
   onClearFeedbackBanner: () -> Unit,
+  onClearRecentChannels: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val snackbarHostState = remember { SnackbarHostState() }
@@ -202,11 +205,13 @@ fun IptvScreen(
               "Global" -> {
                 GlobalCatalogView(
                   channels = uiState.allChannels,
+                  recentChannels = uiState.recentChannels,
                   favoriteIds = uiState.favoriteIds,
                   brokenChannelIds = uiState.brokenChannelIds,
                   hideBrokenChannels = uiState.hideBrokenChannels,
                   sortMode = uiState.sortMode,
                   activeChannelId = uiState.activeChannel?.id,
+                  isPlaying = uiState.playbackStatus is PlaybackStatus.Playing,
                   onSelectChannel = { channel ->
                     selectedTab = "TV"
                     onSelectChannel(channel)
@@ -214,6 +219,7 @@ fun IptvScreen(
                   onToggleFavorite = onToggleFavorite,
                   onToggleHideBroken = onToggleHideBroken,
                   onCycleSortMode = onCycleSortMode,
+                  onClearRecent = onClearRecentChannels,
                   modifier = Modifier.fillMaxSize(),
                 )
               }
@@ -270,35 +276,39 @@ fun IptvScreen(
                       )
                     }
 
-                    // RIGHT COLUMN (~58%): Video Player Preview + Channel Info Card
+                    // RIGHT COLUMN (~58%): Video Player Preview + Channel Info Card + Continue Watching
                     Column(
                       modifier = Modifier.weight(0.58f).fillMaxHeight(),
-                      verticalArrangement = Arrangement.spacedBy(12.dp),
+                      verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                      VideoPlayerStage(
-                        player = player,
-                        activeChannel = uiState.activeChannel,
-                        playbackStatus = uiState.playbackStatus,
-                        isMuted = uiState.isMuted,
-                        isFavorite = activeIsFavorite,
-                        liveResolutionLabel = uiState.liveResolutionLabel,
-                        aspectRatioMode = uiState.aspectRatioMode,
-                        isFullscreen = false,
-                        isTelevision = isTelevision,
-                        onTogglePlayPause = onTogglePlayPause,
-                        onRetry = onRetryPlayback,
-                        onToggleMute = onToggleMute,
-                        onPreviousChannel = onPreviousChannel,
-                        onNextChannel = onNextChannel,
-                        onToggleFavorite = { uiState.activeChannel?.let { onToggleFavorite(it.id) } },
-                        onCycleAspectRatio = onCycleAspectRatio,
-                        onToggleFullscreen = onToggleFullscreen,
-                        modifier =
-                          Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(16f / 9f)
-                            .clip(RoundedCornerShape(20.dp)),
-                      )
+                      Box(
+                        modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                        contentAlignment = Alignment.TopCenter,
+                      ) {
+                        VideoPlayerStage(
+                          player = player,
+                          activeChannel = uiState.activeChannel,
+                          playbackStatus = uiState.playbackStatus,
+                          isMuted = uiState.isMuted,
+                          isFavorite = activeIsFavorite,
+                          liveResolutionLabel = uiState.liveResolutionLabel,
+                          aspectRatioMode = uiState.aspectRatioMode,
+                          isFullscreen = false,
+                          isTelevision = isTelevision,
+                          onTogglePlayPause = onTogglePlayPause,
+                          onRetry = onRetryPlayback,
+                          onToggleMute = onToggleMute,
+                          onPreviousChannel = onPreviousChannel,
+                          onNextChannel = onNextChannel,
+                          onToggleFavorite = { uiState.activeChannel?.let { onToggleFavorite(it.id) } },
+                          onCycleAspectRatio = onCycleAspectRatio,
+                          onToggleFullscreen = onToggleFullscreen,
+                          modifier =
+                            Modifier
+                              .aspectRatio(16f / 9f)
+                              .clip(RoundedCornerShape(20.dp)),
+                        )
+                      }
 
                       NextProgramInfoCard(
                         activeChannel = uiState.activeChannel,
@@ -310,6 +320,21 @@ fun IptvScreen(
                         isCompact = false,
                         modifier = Modifier.fillMaxWidth(),
                       )
+
+                      if (uiState.recentChannels.isNotEmpty()) {
+                        ContinueWatchingSection(
+                          recentChannels = uiState.recentChannels,
+                          activeChannelId = uiState.activeChannel?.id,
+                          isPlaying = uiState.playbackStatus is PlaybackStatus.Playing,
+                          brokenChannelIds = uiState.brokenChannelIds,
+                          favoriteIds = uiState.favoriteIds,
+                          onSelectChannel = onSelectChannel,
+                          onToggleFavorite = onToggleFavorite,
+                          onClearRecent = onClearRecentChannels,
+                          isCompact = false,
+                          modifier = Modifier.fillMaxWidth(),
+                        )
+                      }
                     }
                   }
                 } else {
@@ -378,6 +403,8 @@ fun IptvScreen(
                       uiState = uiState,
                       listState = listState,
                       isTelevision = isTelevision,
+                      showContinueWatchingHeader = true,
+                      onClearRecentChannels = onClearRecentChannels,
                       onSelectChannel = onSelectChannel,
                       onToggleFavorite = onToggleFavorite,
                       onResetFilters = {
@@ -420,6 +447,8 @@ private fun ChannelListLazyColumn(
   onToggleFavorite: (String) -> Unit,
   onResetFilters: () -> Unit,
   modifier: Modifier = Modifier,
+  showContinueWatchingHeader: Boolean = false,
+  onClearRecentChannels: () -> Unit = {},
 ) {
   LazyColumn(
     state = listState,
@@ -427,6 +456,23 @@ private fun ChannelListLazyColumn(
     verticalArrangement = Arrangement.spacedBy(8.dp),
     modifier = modifier.testTag("channel_list_lazy_column"),
   ) {
+    if (showContinueWatchingHeader && uiState.recentChannels.isNotEmpty() && uiState.searchQuery.isBlank()) {
+      item(key = "portrait_continue_watching") {
+        ContinueWatchingSection(
+          recentChannels = uiState.recentChannels,
+          activeChannelId = uiState.activeChannel?.id,
+          isPlaying = uiState.playbackStatus is PlaybackStatus.Playing,
+          brokenChannelIds = uiState.brokenChannelIds,
+          favoriteIds = uiState.favoriteIds,
+          onSelectChannel = onSelectChannel,
+          onToggleFavorite = onToggleFavorite,
+          onClearRecent = onClearRecentChannels,
+          isCompact = true,
+          modifier = Modifier.padding(bottom = 4.dp),
+        )
+      }
+    }
+
     if (uiState.filteredChannels.isEmpty()) {
       item(key = "empty_state") {
         EmptyChannelsState(

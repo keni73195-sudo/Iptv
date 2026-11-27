@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 data class IptvUiState(
   val allChannels: List<Channel> = emptyList(),
   val filteredChannels: List<Channel> = emptyList(),
+  val recentChannels: List<Channel> = emptyList(),
   val activeChannel: Channel? = null,
   val selectedCategory: ChannelCategory = ChannelCategory.ALL,
   val searchQuery: String = "",
@@ -72,6 +73,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     get() = playerManager.player
 
   private val attemptedFailoverIds = mutableSetOf<String>()
+  private var anchorNextChannelId: String? = null
+  private var anchorPrevChannelId: String? = null
 
   private val _channels = MutableStateFlow<List<Channel>>(M3uParser.parse(DefaultPlaylists.BFM_M3U))
   private val _activeChannelId = MutableStateFlow<String?>(null)
@@ -112,7 +115,13 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
   private val channelTagsFlow =
-    combine(repository.favoriteChannelIds, _brokenChannelIds) { favs, broken -> favs to broken }
+    combine(
+      repository.favoriteChannelIds,
+      _brokenChannelIds,
+      repository.recentChannelIds,
+    ) { favs, broken, recents ->
+      Triple(favs, broken, recents)
+    }
 
   val uiState: StateFlow<IptvUiState> =
     combine(
@@ -129,7 +138,13 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         combine(filterControlsFlow, dialogControlsFlow) { f, d -> f to d },
       ) { channels, activeId, channelTags, playerInfo, controlsPair ->
         val (filters, dialog) = controlsPair
-        val (favoriteIds, brokenIds) = channelTags
+        val (favoriteIds, brokenIds, recentIds) = channelTags
+        val channelsById = channels.associateBy { it.id }
+        val recentChannels =
+          recentIds.mapNotNull { id ->
+            val ch = channelsById[id] ?: return@mapNotNull null
+            if (filters.hideBrokenChannels && ch.id in brokenIds) null else ch
+          }
         val activeChannel =
           channels.firstOrNull { it.id == activeId } ?: channels.firstOrNull()
         val query = filters.searchQuery.trim()
@@ -175,6 +190,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         IptvUiState(
           allChannels = channels,
           filteredChannels = orderedChannels,
+          recentChannels = recentChannels,
           activeChannel = activeChannel,
           selectedCategory = filters.selectedCategory,
           searchQuery = filters.searchQuery,
@@ -268,7 +284,31 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   fun selectChannel(channel: Channel) {
     attemptedFailoverIds.clear()
     attemptedFailoverIds.add(channel.id)
+    updateZapAnchors(channel)
     playSelectedChannel(channel)
+  }
+
+  private fun updateZapAnchors(channel: Channel) {
+    val currentList = uiState.value.filteredChannels.ifEmpty { _channels.value }
+    val broken = _brokenChannelIds.value
+    val idx = currentList.indexOfFirst { it.id == channel.id }
+    if (idx >= 0 && currentList.size > 1) {
+      anchorNextChannelId =
+        (1 until currentList.size).firstNotNullOfOrNull { offset ->
+          currentList[(idx + offset) % currentList.size]
+            .takeIf { it.id != channel.id && it.id !in broken }
+            ?.id
+        }
+      anchorPrevChannelId =
+        (1 until currentList.size).firstNotNullOfOrNull { offset ->
+          currentList[(idx - offset + currentList.size) % currentList.size]
+            .takeIf { it.id != channel.id && it.id !in broken }
+            ?.id
+        }
+    } else {
+      anchorNextChannelId = null
+      anchorPrevChannelId = null
+    }
   }
 
   private fun playSelectedChannel(channel: Channel) {
@@ -282,7 +322,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     attemptedFailoverIds.add(failedChannel.id)
     if (attemptedFailoverIds.size >= MAX_FAILOVER_ATTEMPTS) return false
 
-    val backup = findBackupChannel(_channels.value, failedChannel, attemptedFailoverIds) ?: return false
+    val scopedList = uiState.value.filteredChannels.ifEmpty { _channels.value }
+    val excluded = attemptedFailoverIds + _brokenChannelIds.value
+    val backup = findBackupChannel(scopedList, failedChannel, excluded) ?: return false
     attemptedFailoverIds.add(backup.id)
     _feedbackBanner.value = "Flux indisponible, bascule vers ${backup.displayTitle}"
     playSelectedChannel(backup)
@@ -292,17 +334,49 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   fun zapNext() {
     val list = uiState.value.filteredChannels.ifEmpty { _channels.value }
     if (list.isEmpty()) return
-    val currentIdx = list.indexOfFirst { it.id == _activeChannelId.value }
-    val nextIdx = if (currentIdx < 0) 0 else (currentIdx + 1) % list.size
-    selectChannel(list[nextIdx])
+    val broken = _brokenChannelIds.value
+    val activeId = _activeChannelId.value
+    val currentIdx = list.indexOfFirst { it.id == activeId }
+
+    val target =
+      if (activeId != null && (activeId in broken || currentIdx < 0)) {
+        anchorNextChannelId?.let { anchorId -> list.firstOrNull { it.id == anchorId } }
+          ?: list.firstOrNull { it.id !in broken }
+          ?: list.first()
+      } else if (currentIdx < 0) {
+        list.firstOrNull { it.id !in broken } ?: list.first()
+      } else {
+        (1..list.size).firstNotNullOfOrNull { offset ->
+          val candidate = list[(currentIdx + offset) % list.size]
+          candidate.takeIf { it.id !in broken }
+        } ?: list[(currentIdx + 1) % list.size]
+      }
+
+    selectChannel(target)
   }
 
   fun zapPrevious() {
     val list = uiState.value.filteredChannels.ifEmpty { _channels.value }
     if (list.isEmpty()) return
-    val currentIdx = list.indexOfFirst { it.id == _activeChannelId.value }
-    val prevIdx = if (currentIdx <= 0) list.lastIndex else currentIdx - 1
-    selectChannel(list[prevIdx])
+    val broken = _brokenChannelIds.value
+    val activeId = _activeChannelId.value
+    val currentIdx = list.indexOfFirst { it.id == activeId }
+
+    val target =
+      if (activeId != null && (activeId in broken || currentIdx < 0)) {
+        anchorPrevChannelId?.let { anchorId -> list.firstOrNull { it.id == anchorId } }
+          ?: list.lastOrNull { it.id !in broken }
+          ?: list.last()
+      } else if (currentIdx < 0) {
+        list.lastOrNull { it.id !in broken } ?: list.last()
+      } else {
+        (1..list.size).firstNotNullOfOrNull { offset ->
+          val candidate = list[(currentIdx - offset + list.size) % list.size]
+          candidate.takeIf { it.id !in broken }
+        } ?: list[if (currentIdx <= 0) list.lastIndex else currentIdx - 1]
+      }
+
+    selectChannel(target)
   }
 
   fun togglePlayPause() = playerManager.togglePlayPause()
@@ -344,6 +418,11 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
   fun toggleFavorite(channelId: String) {
     viewModelScope.launch { repository.toggleFavorite(channelId) }
+  }
+
+  fun clearRecentChannels() {
+    viewModelScope.launch { repository.clearRecentChannels() }
+    _feedbackBanner.value = "Historique de lecture effacé"
   }
 
   fun toggleActiveFavorite() {
@@ -574,7 +653,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   companion object {
-    private const val MAX_FAILOVER_ATTEMPTS = 4
+    private const val MAX_FAILOVER_ATTEMPTS = 2
     private val qualitySuffixRegex =
       Regex("""\b(FHD|UHD|HD|SD|4K|H265|HEVC|FR)\b""", RegexOption.IGNORE_CASE)
 
@@ -603,19 +682,16 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
       failedChannel: Channel,
       excludedIds: Set<String>,
     ): Channel? {
-      val targetTvgId =
-        failedChannel.tvgId.trim().takeIf { it.isNotBlank() && !it.equals("EPG N/A", ignoreCase = true) }
       val targetKey = normalizeChannelKey(failedChannel.displayTitle)
+      if (targetKey.length < 3) return null
 
       val candidates =
         allChannels.filter { candidate ->
           if (candidate.id in excludedIds || candidate.streamUrl == failedChannel.streamUrl) {
             return@filter false
           }
-          val sameTvgId = targetTvgId != null && candidate.tvgId.equals(targetTvgId, ignoreCase = true)
-          val sameTitleKey =
-            targetKey.length >= 2 && normalizeChannelKey(candidate.displayTitle) == targetKey
-          sameTvgId || sameTitleKey
+          candidate.category == failedChannel.category &&
+            normalizeChannelKey(candidate.displayTitle) == targetKey
         }
 
       return candidates.firstOrNull { it.streamUrl.contains(".m3u8", ignoreCase = true) }

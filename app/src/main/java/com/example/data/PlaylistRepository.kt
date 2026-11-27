@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 
 class PlaylistRepository(
   private val context: Context,
@@ -23,7 +24,9 @@ class PlaylistRepository(
     const val PREFS_NAME = "ondetv_prefs"
     const val FAVORITE_IDS = "favorite_channel_ids"
     const val LAST_CHANNEL_ID = "last_channel_id"
+    const val RECENT_CHANNEL_IDS = "recent_channel_ids"
     const val AUTO_SYNCED_REMOTE = "auto_synced_remote_sources_v3"
+    const val MAX_RECENT_CHANNELS = 12
   }
 
   private val prefs: SharedPreferences =
@@ -35,6 +38,10 @@ class PlaylistRepository(
 
   private val _lastChannelId = MutableStateFlow(prefs.getString(Keys.LAST_CHANNEL_ID, null))
   val lastChannelId: Flow<String?> = _lastChannelId.asStateFlow()
+
+  private val _recentChannelIds =
+    MutableStateFlow(decodeRecentIds(prefs.getString(Keys.RECENT_CHANNEL_IDS, null)))
+  val recentChannelIds: Flow<List<String>> = _recentChannelIds.asStateFlow()
 
   private val _hasAutoSyncedRemote =
     MutableStateFlow(prefs.getBoolean(Keys.AUTO_SYNCED_REMOTE, false))
@@ -54,9 +61,37 @@ class PlaylistRepository(
 
   suspend fun saveLastChannelId(channelId: String) {
     _lastChannelId.value = channelId
+    val updatedRecent =
+      (listOf(channelId) + _recentChannelIds.value.filterNot { it == channelId })
+        .take(Keys.MAX_RECENT_CHANNELS)
+    _recentChannelIds.value = updatedRecent
+    val encoded = JSONArray(updatedRecent).toString()
     withContext(Dispatchers.IO) {
-      prefs.edit().putString(Keys.LAST_CHANNEL_ID, channelId).apply()
+      prefs.edit()
+        .putString(Keys.LAST_CHANNEL_ID, channelId)
+        .putString(Keys.RECENT_CHANNEL_IDS, encoded)
+        .apply()
     }
+  }
+
+  suspend fun clearRecentChannels() {
+    _recentChannelIds.value = emptyList()
+    withContext(Dispatchers.IO) {
+      prefs.edit().remove(Keys.RECENT_CHANNEL_IDS).apply()
+    }
+  }
+
+  private fun decodeRecentIds(raw: String?): List<String> {
+    if (raw.isNullOrBlank()) return emptyList()
+    return runCatching {
+      val array = JSONArray(raw)
+      buildList(array.length()) {
+        for (i in 0 until array.length()) {
+          val id = array.optString(i)
+          if (id.isNotBlank()) add(id)
+        }
+      }
+    }.getOrDefault(emptyList())
   }
 
   suspend fun setAutoSyncedRemote(synced: Boolean) {

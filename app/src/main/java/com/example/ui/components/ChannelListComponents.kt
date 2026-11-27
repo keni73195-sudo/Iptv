@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -63,6 +64,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.model.Channel
@@ -797,6 +799,8 @@ fun NextProgramInfoCard(
     when (playbackStatus) {
       is PlaybackStatus.Playing -> "EN DIRECT"
       is PlaybackStatus.Buffering -> stringResource(R.string.buffering_status)
+      is PlaybackStatus.Reconnecting ->
+        "Reconnexion (${playbackStatus.attempt}/${playbackStatus.maxAttempts})…"
       is PlaybackStatus.Paused -> stringResource(R.string.paused_status)
       is PlaybackStatus.Error -> stringResource(R.string.channel_offline_badge)
       PlaybackStatus.Idle -> "Prêt à lire"
@@ -805,7 +809,8 @@ fun NextProgramInfoCard(
     when (playbackStatus) {
       is PlaybackStatus.Playing -> EmeraldReady
       is PlaybackStatus.Error -> Color(0xFFEF4444)
-      is PlaybackStatus.Buffering -> OrangeAccent
+      is PlaybackStatus.Buffering,
+      is PlaybackStatus.Reconnecting -> OrangeAccent
       else -> InkSecondary
     }
   val categoryText = activeChannel?.let { categoryLabel(it.category) } ?: "TV en direct"
@@ -993,10 +998,11 @@ private object ChannelLogoCache {
 }
 
 @Composable
-private fun ChannelEmblem(
+fun ChannelEmblem(
   channelNumber: Int,
   monogram: String,
   logoUrl: String?,
+  emblemSize: Dp = 38.dp,
 ) {
   val badgeColor =
     when ((channelNumber - 1) % 8) {
@@ -1024,7 +1030,7 @@ private fun ChannelEmblem(
   Box(
     modifier =
       Modifier
-        .size(38.dp)
+        .size(emblemSize)
         .clip(RoundedCornerShape(8.dp))
         .background(badgeColor),
     contentAlignment = Alignment.Center,
@@ -1041,8 +1047,190 @@ private fun ChannelEmblem(
         bitmap = loaded,
         contentDescription = null,
         contentScale = ContentScale.Fit,
-        modifier = Modifier.size(28.dp),
+        modifier = Modifier.size(emblemSize * 0.74f),
       )
+    }
+  }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun ContinueWatchingSection(
+  recentChannels: List<Channel>,
+  activeChannelId: String?,
+  isPlaying: Boolean,
+  brokenChannelIds: Set<String>,
+  favoriteIds: Set<String>,
+  onSelectChannel: (Channel) -> Unit,
+  onToggleFavorite: (String) -> Unit,
+  onClearRecent: () -> Unit,
+  isCompact: Boolean = false,
+  modifier: Modifier = Modifier,
+) {
+  if (recentChannels.isEmpty()) return
+
+  Column(
+    modifier = modifier.fillMaxWidth().testTag("continue_watching_section"),
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+          color = OrangeAccent.copy(alpha = 0.18f),
+          shape = CircleShape,
+          modifier = Modifier.size(22.dp),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              imageVector = Icons.Rounded.PlayArrow,
+              contentDescription = null,
+              tint = OrangeAccent,
+              modifier = Modifier.size(14.dp),
+            )
+          }
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+          text = stringResource(R.string.continue_watching_title),
+          style =
+            (if (isCompact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleSmall)
+              .copy(fontWeight = FontWeight.Bold),
+          color = Color.White,
+        )
+      }
+
+      var isClearFocused by remember { mutableStateOf(false) }
+      Surface(
+        color = if (isClearFocused) OrangeAccent.copy(alpha = 0.25f) else Color(0xFF1A2030),
+        shape = RoundedCornerShape(999.dp),
+        border =
+          BorderStroke(
+            width = if (isClearFocused) 1.5.dp else 1.dp,
+            color = if (isClearFocused) OrangeAccent else Color(0xFF2E384D),
+          ),
+        modifier =
+          Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .onFocusChanged { isClearFocused = it.isFocused }
+            .clickable(onClick = onClearRecent)
+            .testTag("clear_continue_watching_button"),
+      ) {
+        Text(
+          text = stringResource(R.string.clear_history),
+          style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+          color = if (isClearFocused) Color.White else Color(0xFF94A3B8),
+          modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        )
+      }
+    }
+
+    Spacer(modifier = Modifier.height(8.dp))
+
+    LazyRow(
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      items(
+        items = recentChannels,
+        key = { "recent_${it.id}" },
+      ) { channel ->
+        val isSelected = channel.id == activeChannelId
+        val isBroken = channel.id in brokenChannelIds
+        val isFav = channel.id in favoriteIds
+        var isFocused by remember { mutableStateOf(false) }
+        val active = isSelected || isFocused
+
+        Surface(
+          color = if (active) Color.White else Color(0xFF131722),
+          shape = RoundedCornerShape(12.dp),
+          border =
+            BorderStroke(
+              width = if (isFocused) 2.5.dp else 1.dp,
+              color =
+                when {
+                  isFocused -> OrangeAccent
+                  isSelected -> OrangeAccent
+                  isBroken -> Color(0xFFEF4444).copy(alpha = 0.4f)
+                  else -> Color(0xFF222838)
+                },
+            ),
+          modifier =
+            Modifier
+              .width(if (isCompact) 144.dp else 160.dp)
+              .clip(RoundedCornerShape(12.dp))
+              .onFocusChanged { isFocused = it.isFocused }
+              .combinedClickable(
+                onClick = { onSelectChannel(channel) },
+                onLongClick = { onToggleFavorite(channel.id) },
+              )
+              .testTag("continue_watching_card_${channel.number}"),
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            ChannelEmblem(
+              channelNumber = channel.number,
+              monogram = channel.monogram,
+              logoUrl = channel.tvgLogo,
+              emblemSize = 30.dp,
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                text = channel.displayTitle,
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                color = if (active) Color(0xFF111827) else if (isBroken) Color(0xFF94A3B8) else Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+              Spacer(modifier = Modifier.height(1.dp))
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isSelected && isPlaying) {
+                  Box(
+                    modifier =
+                      Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(OrangeAccent)
+                  )
+                  Spacer(modifier = Modifier.width(4.dp))
+                }
+                Text(
+                  text =
+                    when {
+                      isBroken -> stringResource(R.string.channel_offline_badge)
+                      isSelected && isPlaying -> stringResource(R.string.live_badge)
+                      else -> "CH ${channel.number}"
+                    },
+                  style = MaterialTheme.typography.labelSmall,
+                  color =
+                    when {
+                      isBroken -> Color(0xFFEF4444)
+                      isSelected && isPlaying -> OrangeAccent
+                      active -> Color(0xFF4B5563)
+                      else -> Color(0xFF8A93A6)
+                    },
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+                if (isFav) {
+                  Spacer(modifier = Modifier.width(4.dp))
+                  Icon(
+                    painter = painterResource(R.drawable.ic_star),
+                    contentDescription = null,
+                    tint = AmberFavorite,
+                    modifier = Modifier.size(11.dp),
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

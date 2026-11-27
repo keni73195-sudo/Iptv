@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,6 +46,9 @@ class IptvPlayerManager(context: Context) {
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private var prepareJob: Job? = null
+  private var reconnectJob: Job? = null
+  private var bufferingWatchdogJob: Job? = null
+  private var steadyResetJob: Job? = null
 
   val player: ExoPlayer =
     ExoPlayer.Builder(context.applicationContext)
@@ -68,6 +72,9 @@ class IptvPlayerManager(context: Context) {
   val videoResolutionLabel: StateFlow<String?> = _videoResolutionLabel.asStateFlow()
 
   private var currentChannel: Channel? = null
+  private var hasStartedPlayingCurrentChannel = false
+  private var autoReconnectAttempt = 0
+  private var isUserPaused = false
 
   /**
    * Optional handler invoked when a stream fails. Returns true if failover to a backup stream
@@ -87,6 +94,12 @@ class IptvPlayerManager(context: Context) {
 
       override fun onPlayerError(error: PlaybackException) {
         val failedChannel = currentChannel
+        if (failedChannel != null && !isUserPaused && hasStartedPlayingCurrentChannel &&
+          tryScheduleAutoReconnect(failedChannel)
+        ) {
+          return
+        }
+
         if (failedChannel != null && onStreamFailure?.invoke(failedChannel) == true) {
           return
         }
@@ -118,11 +131,19 @@ class IptvPlayerManager(context: Context) {
   }
 
   fun playChannel(channel: Channel) {
-    prepareJob?.cancel()
+    cancelBackgroundTimers()
     currentChannel = channel
-    player.stop()
+    hasStartedPlayingCurrentChannel = false
+    autoReconnectAttempt = 0
+    isUserPaused = false
     _videoResolutionLabel.value = channel.resolution
     _playbackStatus.value = PlaybackStatus.Buffering
+    launchChannelPreparation(channel, isAutoReconnect = false)
+  }
+
+  private fun launchChannelPreparation(channel: Channel, isAutoReconnect: Boolean) {
+    prepareJob?.cancel()
+    player.stop()
 
     val userAgent = channel.userAgent?.takeIf { it.isNotBlank() } ?: DEFAULT_USER_AGENT
     val headers = buildMap {
@@ -134,9 +155,14 @@ class IptvPlayerManager(context: Context) {
       scope.launch {
         val probe = withContext(Dispatchers.IO) { probeStream(channel.streamUrl, headers) }
         ensureActive()
-        if (currentChannel?.id != channel.id) return@launch
+        if (currentChannel?.id != channel.id || isUserPaused) return@launch
 
         if (probe.failureMessage != null) {
+          if ((hasStartedPlayingCurrentChannel || isAutoReconnect) &&
+            tryScheduleAutoReconnect(channel)
+          ) {
+            return@launch
+          }
           if (onStreamFailure?.invoke(channel) == true) {
             return@launch
           }
@@ -150,7 +176,7 @@ class IptvPlayerManager(context: Context) {
             .setUserAgent(userAgent)
             .setDefaultRequestProperties(headers)
             .setConnectTimeoutMs(12_000)
-            .setReadTimeoutMs(20_000)
+            .setReadTimeoutMs(15_000)
             .setAllowCrossProtocolRedirects(true)
 
         val detectedMimeType = probe.mimeType
@@ -175,6 +201,29 @@ class IptvPlayerManager(context: Context) {
         player.prepare()
         player.playWhenReady = true
       }
+  }
+
+  private fun tryScheduleAutoReconnect(channel: Channel): Boolean {
+    if (isUserPaused || currentChannel?.id != channel.id) return false
+    if (autoReconnectAttempt >= MAX_AUTO_RECONNECT_ATTEMPTS) return false
+
+    autoReconnectAttempt++
+    val attempt = autoReconnectAttempt
+    bufferingWatchdogJob?.cancel()
+    steadyResetJob?.cancel()
+    reconnectJob?.cancel()
+    _playbackStatus.value =
+      PlaybackStatus.Reconnecting(attempt = attempt, maxAttempts = MAX_AUTO_RECONNECT_ATTEMPTS)
+
+    reconnectJob =
+      scope.launch {
+        delay(AUTO_RECONNECT_BASE_DELAY_MS * attempt)
+        ensureActive()
+        if (currentChannel?.id == channel.id && !isUserPaused) {
+          launchChannelPreparation(channel, isAutoReconnect = true)
+        }
+      }
+    return true
   }
 
   private fun probeStream(url: String, headers: Map<String, String>): ProbeResult {
@@ -303,27 +352,42 @@ class IptvPlayerManager(context: Context) {
   }
 
   fun togglePlayPause() {
-    if (player.playbackState == Player.STATE_IDLE && prepareJob?.isActive != true) {
+    if (player.playbackState == Player.STATE_IDLE &&
+      prepareJob?.isActive != true &&
+      reconnectJob?.isActive != true
+    ) {
       retryCurrentChannel()
       return
     }
     if (player.isPlaying || player.playWhenReady) {
-      player.pause()
+      pause()
     } else {
+      isUserPaused = false
       player.play()
+      updateStatusFromPlayer()
     }
-    updateStatusFromPlayer()
   }
 
   fun pause() {
-    if (player.isPlaying) {
+    isUserPaused = true
+    reconnectJob?.cancel()
+    bufferingWatchdogJob?.cancel()
+    steadyResetJob?.cancel()
+    if (player.isPlaying || player.playWhenReady) {
       player.pause()
       updateStatusFromPlayer()
     }
   }
 
   fun resumeIfReady() {
-    if (currentChannel != null && player.playbackState != Player.STATE_IDLE) {
+    val active = currentChannel ?: return
+    isUserPaused = false
+    if (player.playbackState == Player.STATE_IDLE ||
+      player.playbackState == Player.STATE_ENDED ||
+      player.playerError != null
+    ) {
+      playChannel(active)
+    } else {
       player.playWhenReady = true
       updateStatusFromPlayer()
     }
@@ -336,32 +400,114 @@ class IptvPlayerManager(context: Context) {
   }
 
   fun release() {
-    prepareJob?.cancel()
+    cancelBackgroundTimers()
     scope.cancel()
     player.removeListener(playerListener)
     player.release()
   }
 
+  private fun cancelBackgroundTimers() {
+    prepareJob?.cancel()
+    reconnectJob?.cancel()
+    bufferingWatchdogJob?.cancel()
+    steadyResetJob?.cancel()
+  }
+
   private fun updateStatusFromPlayer() {
+    if (reconnectJob?.isActive == true) return
     if (prepareJob?.isActive == true && player.playbackState == Player.STATE_IDLE) return
     if (_playbackStatus.value is PlaybackStatus.Error && player.playerError != null) return
 
-    _playbackStatus.value =
-      when (player.playbackState) {
-        Player.STATE_IDLE -> PlaybackStatus.Idle
-        Player.STATE_BUFFERING -> PlaybackStatus.Buffering
-        Player.STATE_READY ->
-          if (player.isPlaying || player.playWhenReady) {
-            PlaybackStatus.Playing
-          } else {
-            PlaybackStatus.Paused
+    when (player.playbackState) {
+      Player.STATE_IDLE -> {
+        bufferingWatchdogJob?.cancel()
+        _playbackStatus.value = PlaybackStatus.Idle
+      }
+      Player.STATE_BUFFERING -> {
+        steadyResetJob?.cancel()
+        if (autoReconnectAttempt > 0) {
+          _playbackStatus.value =
+            PlaybackStatus.Reconnecting(autoReconnectAttempt, MAX_AUTO_RECONNECT_ATTEMPTS)
+        } else {
+          _playbackStatus.value = PlaybackStatus.Buffering
+        }
+        startBufferingWatchdogIfNeeded()
+      }
+      Player.STATE_READY -> {
+        bufferingWatchdogJob?.cancel()
+        if (player.isPlaying || player.playWhenReady) {
+          hasStartedPlayingCurrentChannel = true
+          _playbackStatus.value = PlaybackStatus.Playing
+          scheduleSteadyAttemptReset()
+        } else {
+          steadyResetJob?.cancel()
+          _playbackStatus.value = PlaybackStatus.Paused
+        }
+      }
+      Player.STATE_ENDED -> {
+        bufferingWatchdogJob?.cancel()
+        steadyResetJob?.cancel()
+        val active = currentChannel
+        if (!isUserPaused && hasStartedPlayingCurrentChannel && active != null &&
+          tryScheduleAutoReconnect(active)
+        ) {
+          return
+        }
+        _playbackStatus.value = PlaybackStatus.Paused
+      }
+      else -> {
+        bufferingWatchdogJob?.cancel()
+        _playbackStatus.value = PlaybackStatus.Idle
+      }
+    }
+  }
+
+  private fun startBufferingWatchdogIfNeeded() {
+    if (!hasStartedPlayingCurrentChannel || isUserPaused) return
+    val channel = currentChannel ?: return
+    if (bufferingWatchdogJob?.isActive == true) return
+
+    bufferingWatchdogJob =
+      scope.launch {
+        delay(BUFFERING_STALL_TIMEOUT_MS)
+        ensureActive()
+        if (currentChannel?.id == channel.id &&
+          !isUserPaused &&
+          player.playbackState == Player.STATE_BUFFERING
+        ) {
+          if (!tryScheduleAutoReconnect(channel)) {
+            if (onStreamFailure?.invoke(channel) != true) {
+              _playbackStatus.value =
+                PlaybackStatus.Error(
+                  message = "Le flux ne répond plus après plusieurs tentatives.",
+                  codeName = "STREAM_STALL_TIMEOUT",
+                )
+            }
           }
-        Player.STATE_ENDED -> PlaybackStatus.Paused
-        else -> PlaybackStatus.Idle
+        }
+      }
+  }
+
+  private fun scheduleSteadyAttemptReset() {
+    if (autoReconnectAttempt == 0) return
+    val channel = currentChannel ?: return
+    if (steadyResetJob?.isActive == true) return
+
+    steadyResetJob =
+      scope.launch {
+        delay(STEADY_PLAYBACK_RESET_MS)
+        ensureActive()
+        if (currentChannel?.id == channel.id && _playbackStatus.value is PlaybackStatus.Playing) {
+          autoReconnectAttempt = 0
+        }
       }
   }
 
   private companion object {
+    const val MAX_AUTO_RECONNECT_ATTEMPTS = 3
+    const val AUTO_RECONNECT_BASE_DELAY_MS = 1_500L
+    const val BUFFERING_STALL_TIMEOUT_MS = 12_000L
+    const val STEADY_PLAYBACK_RESET_MS = 10_000L
     const val DEFAULT_USER_AGENT =
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
   }

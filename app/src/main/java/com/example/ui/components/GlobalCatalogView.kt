@@ -55,15 +55,18 @@ import com.example.ui.theme.OrangeAccent
 @Composable
 fun GlobalCatalogView(
   channels: List<Channel>,
+  recentChannels: List<Channel>,
   favoriteIds: Set<String>,
   brokenChannelIds: Set<String>,
   hideBrokenChannels: Boolean,
   sortMode: ChannelSortMode,
   activeChannelId: String?,
+  isPlaying: Boolean,
   onSelectChannel: (Channel) -> Unit,
   onToggleFavorite: (String) -> Unit,
   onToggleHideBroken: () -> Unit,
   onCycleSortMode: () -> Unit,
+  onClearRecent: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val categoryOrder =
@@ -227,6 +230,23 @@ fun GlobalCatalogView(
             }
           }
         }
+      }
+    }
+
+    // Continue Watching Section in Global View
+    if (recentChannels.isNotEmpty()) {
+      item(key = "global_continue_watching") {
+        ContinueWatchingSection(
+          recentChannels = recentChannels,
+          activeChannelId = activeChannelId,
+          isPlaying = isPlaying,
+          brokenChannelIds = brokenChannelIds,
+          favoriteIds = favoriteIds,
+          onSelectChannel = onSelectChannel,
+          onToggleFavorite = onToggleFavorite,
+          onClearRecent = onClearRecent,
+          isCompact = false,
+        )
       }
     }
 

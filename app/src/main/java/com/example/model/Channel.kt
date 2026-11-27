@@ -34,6 +34,8 @@ sealed interface PlaybackStatus {
 
   data object Buffering : PlaybackStatus
 
+  data class Reconnecting(val attempt: Int, val maxAttempts: Int) : PlaybackStatus
+
   data object Playing : PlaybackStatus
 
   data object Paused : PlaybackStatus

@@ -171,16 +171,18 @@ fun VideoPlayerStage(
       else -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
     }
 
-  val programSubtitle =
-    remember(activeChannel?.id) {
-      when (activeChannel?.category) {
-        ChannelCategory.MOVIES -> "La Nuit des courts métrages"
-        ChannelCategory.NEWS -> "Édition spéciale en direct"
-        ChannelCategory.SPORTS -> "Direct Sport & Multiplex"
-        ChannelCategory.KIDS -> "Dessins animés & Aventures"
-        ChannelCategory.DOCUMENTARY -> "Grande soirée Découverte"
-        ChannelCategory.MUSIC -> "Live Session & Clips non-stop"
-        else -> "Diffusion en direct"
+  val categoryText = activeChannel?.let { categoryLabel(it.category) }
+  val channelSubtitle =
+    remember(activeChannel?.id, categoryText, liveResolutionLabel) {
+      if (activeChannel == null) {
+        "Sélectionnez une chaîne pour démarrer"
+      } else {
+        val resTag = liveResolutionLabel ?: activeChannel.resolution
+        listOfNotNull(
+          "Chaîne ${activeChannel.number}",
+          categoryText,
+          resTag?.takeIf { it.isNotBlank() },
+        ).joinToString("  •  ")
       }
     }
 
@@ -531,14 +533,32 @@ fun VideoPlayerStage(
           }
         }
 
-        // Center Stage: Buffering or Error state
-        if (playbackStatus is PlaybackStatus.Buffering) {
+        // Center Stage: Buffering, Auto-Reconnecting, or Error state
+        if (playbackStatus is PlaybackStatus.Buffering || playbackStatus is PlaybackStatus.Reconnecting) {
           Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(
-              color = OrangeAccent,
-              strokeWidth = 3.dp,
-              modifier = Modifier.size(42.dp),
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+              CircularProgressIndicator(
+                color = OrangeAccent,
+                strokeWidth = 3.dp,
+                modifier = Modifier.size(42.dp),
+              )
+              if (playbackStatus is PlaybackStatus.Reconnecting) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                  color = Color.Black.copy(alpha = 0.72f),
+                  shape = RoundedCornerShape(999.dp),
+                  border = BorderStroke(1.dp, OrangeAccent.copy(alpha = 0.65f)),
+                  modifier = Modifier.testTag("player_reconnecting_badge"),
+                ) {
+                  Text(
+                    text = "Reconnexion (${playbackStatus.attempt}/${playbackStatus.maxAttempts})…",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                  )
+                }
+              }
+            }
           }
         } else if (playbackStatus is PlaybackStatus.Error) {
           Box(
@@ -727,7 +747,7 @@ fun VideoPlayerStage(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-              text = programSubtitle,
+              text = channelSubtitle,
               style = MaterialTheme.typography.bodyMedium,
               color = Color(0xFFD1D5DB),
               maxLines = 1,
@@ -759,7 +779,9 @@ fun VideoPlayerStage(
                   )
 
                   val isPlayingOrBuffering =
-                    playbackStatus is PlaybackStatus.Playing || playbackStatus is PlaybackStatus.Buffering
+                    playbackStatus is PlaybackStatus.Playing ||
+                      playbackStatus is PlaybackStatus.Buffering ||
+                      playbackStatus is PlaybackStatus.Reconnecting
                   HudActionButton(
                     onClick = {
                       interactionTick++
@@ -1004,7 +1026,7 @@ private fun MiniPreviewOverlay(
       }
     }
 
-    if (playbackStatus is PlaybackStatus.Buffering) {
+    if (playbackStatus is PlaybackStatus.Buffering || playbackStatus is PlaybackStatus.Reconnecting) {
       CircularProgressIndicator(
         color = OrangeAccent,
         strokeWidth = 2.5.dp,

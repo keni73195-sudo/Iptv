@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
           onImportFromText = viewModel::importFromText,
           onResetDefaultPlaylist = viewModel::resetToDefaultPlaylist,
           onClearFeedbackBanner = viewModel::clearFeedbackBanner,
+          onClearRecentChannels = viewModel::clearRecentChannels,
           onToggleHideBroken = viewModel::toggleHideBrokenChannels,
           onCycleSortMode = viewModel::cycleSortMode,
         )

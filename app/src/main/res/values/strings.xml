@@ -56,4 +56,7 @@
     <string name="reset_filters">Tout afficher</string>
     <string name="now_playing_label">À L\'ANTENNE</string>
     <string name="preview_badge">APERÇU</string>
+    <string name="continue_watching_title">Continuer à regarder</string>
+    <string name="clear_history">Effacer</string>
+    <string name="history_cleared_banner">Historique de lecture effacé</string>
 </resources>
