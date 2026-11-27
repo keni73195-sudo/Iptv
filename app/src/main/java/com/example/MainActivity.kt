@@ -1,8 +1,13 @@
 package com.example
 
+import android.app.UiModeManager
+import android.content.Context
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -13,14 +18,22 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.IptvViewModel
 import com.example.ui.screens.IptvScreen
 import com.example.ui.theme.OndeTvTheme
 
 class MainActivity : ComponentActivity() {
+  private var iptvViewModel: IptvViewModel? = null
+
+  private val isTelevision: Boolean by lazy {
+    val uiModeManager = getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+    uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+      packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge(
@@ -28,9 +41,11 @@ class MainActivity : ComponentActivity() {
       navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
     )
 
+    val viewModel = ViewModelProvider(this)[IptvViewModel::class.java]
+    iptvViewModel = viewModel
+
     setContent {
       OndeTvTheme {
-        val viewModel: IptvViewModel = viewModel()
         val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
         LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
@@ -47,10 +62,14 @@ class MainActivity : ComponentActivity() {
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
           if (uiState.isFullscreen) {
             insetsController.hide(WindowInsetsCompat.Type.systemBars())
-            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            if (!isTelevision) {
+              requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            }
           } else {
             insetsController.show(WindowInsetsCompat.Type.systemBars())
-            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            if (!isTelevision) {
+              requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
           }
         }
 
@@ -79,5 +98,42 @@ class MainActivity : ComponentActivity() {
         )
       }
     }
+  }
+
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    val vm = iptvViewModel
+    if (vm != null && event.action == KeyEvent.ACTION_DOWN) {
+      when (event.keyCode) {
+        KeyEvent.KEYCODE_CHANNEL_UP,
+        KeyEvent.KEYCODE_PAGE_UP,
+        KeyEvent.KEYCODE_MEDIA_NEXT -> {
+          vm.zapNext()
+          return true
+        }
+        KeyEvent.KEYCODE_CHANNEL_DOWN,
+        KeyEvent.KEYCODE_PAGE_DOWN,
+        KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+          vm.zapPrevious()
+          return true
+        }
+        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+          vm.togglePlayPause()
+          return true
+        }
+        KeyEvent.KEYCODE_MEDIA_PLAY -> {
+          vm.playerManager.resumeIfReady()
+          return true
+        }
+        KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+          vm.playerManager.pause()
+          return true
+        }
+        KeyEvent.KEYCODE_VOLUME_MUTE -> {
+          vm.toggleMute()
+          return true
+        }
+      }
+    }
+    return super.dispatchKeyEvent(event)
   }
 }

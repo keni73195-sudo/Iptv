@@ -1,69 +1,69 @@
 package com.example.data
 
 import android.content.Context
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.core.stringSetPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
+import android.content.SharedPreferences
 import com.example.model.Channel
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.TimeUnit
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-
-private val Context.iptvDataStore: DataStore<Preferences> by preferencesDataStore(name = "ondetv_prefs")
 
 class PlaylistRepository(
   private val context: Context,
-  private val httpClient: OkHttpClient =
-    OkHttpClient.Builder()
-      .connectTimeout(15, TimeUnit.SECONDS)
-      .readTimeout(30, TimeUnit.SECONDS)
-      .build(),
 ) {
   private object Keys {
-    val FAVORITE_IDS = stringSetPreferencesKey("favorite_channel_ids")
-    val LAST_CHANNEL_ID = stringPreferencesKey("last_channel_id")
-    val AUTO_SYNCED_REMOTE = booleanPreferencesKey("auto_synced_remote_sources")
+    const val PREFS_NAME = "ondetv_prefs"
+    const val FAVORITE_IDS = "favorite_channel_ids"
+    const val LAST_CHANNEL_ID = "last_channel_id"
+    const val AUTO_SYNCED_REMOTE = "auto_synced_remote_sources_v3"
   }
+
+  private val prefs: SharedPreferences =
+    context.applicationContext.getSharedPreferences(Keys.PREFS_NAME, Context.MODE_PRIVATE)
+
+  private val _favoriteChannelIds =
+    MutableStateFlow(prefs.getStringSet(Keys.FAVORITE_IDS, emptySet())?.toSet() ?: emptySet())
+  val favoriteChannelIds: Flow<Set<String>> = _favoriteChannelIds.asStateFlow()
+
+  private val _lastChannelId = MutableStateFlow(prefs.getString(Keys.LAST_CHANNEL_ID, null))
+  val lastChannelId: Flow<String?> = _lastChannelId.asStateFlow()
+
+  private val _hasAutoSyncedRemote =
+    MutableStateFlow(prefs.getBoolean(Keys.AUTO_SYNCED_REMOTE, false))
+  val hasAutoSyncedRemote: Flow<Boolean> = _hasAutoSyncedRemote.asStateFlow()
 
   private val customPlaylistFile: File
     get() = File(context.applicationContext.filesDir, "custom_playlist.m3u")
 
-  val favoriteChannelIds: Flow<Set<String>> =
-    context.iptvDataStore.data.map { prefs -> prefs[Keys.FAVORITE_IDS] ?: emptySet() }
-
-  val lastChannelId: Flow<String?> =
-    context.iptvDataStore.data.map { prefs -> prefs[Keys.LAST_CHANNEL_ID] }
-
-  val hasAutoSyncedRemote: Flow<Boolean> =
-    context.iptvDataStore.data.map { prefs -> prefs[Keys.AUTO_SYNCED_REMOTE] ?: false }
-
   suspend fun toggleFavorite(channelId: String) {
-    context.iptvDataStore.edit { prefs ->
-      val current = prefs[Keys.FAVORITE_IDS] ?: emptySet()
-      prefs[Keys.FAVORITE_IDS] =
-        if (channelId in current) current - channelId else current + channelId
+    val current = _favoriteChannelIds.value
+    val updated = if (channelId in current) current - channelId else current + channelId
+    _favoriteChannelIds.value = updated
+    withContext(Dispatchers.IO) {
+      prefs.edit().putStringSet(Keys.FAVORITE_IDS, updated).apply()
     }
   }
 
   suspend fun saveLastChannelId(channelId: String) {
-    context.iptvDataStore.edit { prefs -> prefs[Keys.LAST_CHANNEL_ID] = channelId }
+    _lastChannelId.value = channelId
+    withContext(Dispatchers.IO) {
+      prefs.edit().putString(Keys.LAST_CHANNEL_ID, channelId).apply()
+    }
   }
 
   suspend fun setAutoSyncedRemote(synced: Boolean) {
-    context.iptvDataStore.edit { prefs -> prefs[Keys.AUTO_SYNCED_REMOTE] = synced }
+    _hasAutoSyncedRemote.value = synced
+    withContext(Dispatchers.IO) {
+      prefs.edit().putBoolean(Keys.AUTO_SYNCED_REMOTE, synced).apply()
+    }
   }
 
   suspend fun loadCustomPlaylistM3u(): String? =
@@ -86,17 +86,37 @@ class PlaylistRepository(
   suspend fun fetchRemoteM3u(url: String): Result<String> =
     withContext(Dispatchers.IO) {
       runCatching {
-        val request =
-          Request.Builder()
-            .url(url.trim())
-            .header("User-Agent", "OndeTV-Android/1.0")
-            .build()
-        httpClient.newCall(request).execute().use { response ->
-          if (!response.isSuccessful) {
-            throw IOException("HTTP ${response.code}")
+        var currentUrl = url.trim()
+        var hops = 0
+        while (true) {
+          val connection =
+            (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+              connectTimeout = 15_000
+              readTimeout = 30_000
+              instanceFollowRedirects = true
+              setRequestProperty("User-Agent", "OndeTV-Android/1.0")
+              setRequestProperty("Connection", "close")
+            }
+          try {
+            val code = connection.responseCode
+            if (code in 300..399 && hops < 5) {
+              val location = connection.getHeaderField("Location")
+              if (!location.isNullOrBlank()) {
+                currentUrl = URL(URL(currentUrl), location).toString()
+                hops++
+                continue
+              }
+            }
+            if (code !in 200..299) {
+              throw IOException("HTTP $code")
+            }
+            return@runCatching connection.inputStream.bufferedReader().use { it.readText() }
+          } finally {
+            connection.disconnect()
           }
-          response.body?.string().orEmpty()
         }
+        @Suppress("UNREACHABLE_CODE")
+        ""
       }
     }
 

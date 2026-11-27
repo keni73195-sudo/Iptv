@@ -5,7 +5,9 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.DefaultPlaylists
 import com.example.data.M3uParser
 import com.example.model.ChannelCategory
+import com.example.ui.IptvViewModel
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,13 +47,15 @@ class M3uParserTest {
   }
 
   @Test
-  fun parseFullBundledPlaylist_includesBfmAndAll328FrenchChannels() {
+  fun parseFullBundledPlaylist_includesBfmAndBothFrenchPlaylistsDeduplicated() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val fullM3u = DefaultPlaylists.loadBundledPlaylistM3u(context)
     val channels = M3uParser.parse(fullM3u)
 
-    assertEquals(343, channels.size)
-    assertEquals(343, channels.map { it.id }.toSet().size)
+    assertTrue("Expected > 600 channels, was ${channels.size}", channels.size > 600)
+    assertEquals(channels.size, channels.map { it.id }.toSet().size)
+    assertEquals(channels.size, channels.map { it.streamUrl }.toSet().size)
+    assertTrue(channels.none { it.streamUrl.contains("#origine") })
 
     val babyTv = channels.first { it.displayTitle == "FR: Baby TV" }
     assertEquals(ChannelCategory.KIDS, babyTv.category)
@@ -62,15 +66,77 @@ class M3uParserTest {
     assertEquals(ChannelCategory.SPORTS, amazonPrime2.category)
     assertNull(amazonPrime2.tvgLogo)
 
-    val viaOccitanie = channels.last()
-    assertEquals("FR: ViaOccitanie", viaOccitanie.displayTitle)
-    assertEquals(ChannelCategory.GENERAL, viaOccitanie.category)
+    assertTrue(channels.any { it.displayTitle == "CANAL ALGERIE" && it.category == ChannelCategory.NEWS })
+    assertTrue(channels.any { it.displayTitle == "PARIS PREMIERE" && it.streamUrl.contains(".mpd") })
+    assertTrue(channels.any { it.displayTitle == "NOVO 19" && it.streamUrl.contains(".mpd") })
+    assertTrue(channels.any { it.displayTitle == "ESPN 1 HD" && it.groupTitle == "USA" })
   }
 
   @Test
-  fun remoteSources_contains8UniqueCountryPlaylists_andSourceTagPrefixesGroup() {
-    assertEquals(8, DefaultPlaylists.REMOTE_SOURCES.size)
-    assertEquals(8, DefaultPlaylists.REMOTE_SOURCES.map { it.url }.toSet().size)
+  fun parseExtInfWithCommaAfterDuration_extractsAttributesCategoriesLogosAndDeduplicatesUrls() {
+    val sample = """
+      #EXTM3U
+      #EXTINF:-1, tvg-id="CanalAlgerie.ar" tvg-logo="Logo N/A" tvg-name="CANAL ALGERIE"  group-title="ACTUALITES",CANAL ALGERIE
+      https://example.com/canal-algerie.m3u8
+      #EXTINF:-1, tvg-id="CanalAlgerie.ar" tvg-logo="Logo N/A" tvg-name="CANAL ALGERIE"  group-title="ACTUALITES",CANAL ALGERIE
+      https://example.com/canal-algerie.m3u8#origine-101=https://tvradiozap.eu
+      #EXTINF:-1, tvg-id="VevoPop.fr" tvg-logo="https://example.com/vevo.png" tvg-name="VEVO Pop"  group-title="MUSIQUE",VEVO Pop
+      https://example.com/vevo-pop.m3u8#origine-863=https://tvradiozap.eu
+      #EXTINF:-1, tvg-id="Tennis.us" tvg-logo="New Logo" tvg-name="TENNIS HD"  group-title="USA",TENNIS HD
+      https://example.com/tennis.m3u8
+    """.trimIndent()
+
+    val parsed = M3uParser.parse(sample)
+    assertEquals(3, parsed.size)
+
+    val canalAlgerie = parsed[0]
+    assertEquals("CANAL ALGERIE", canalAlgerie.displayTitle)
+    assertEquals("CanalAlgerie.ar", canalAlgerie.tvgId)
+    assertEquals("ACTUALITES", canalAlgerie.groupTitle)
+    assertEquals(ChannelCategory.NEWS, canalAlgerie.category)
+    assertEquals("https://example.com/canal-algerie.m3u8", canalAlgerie.streamUrl)
+    assertNull(canalAlgerie.tvgLogo)
+
+    val vevoPop = parsed[1]
+    assertEquals("VEVO Pop", vevoPop.displayTitle)
+    assertEquals(ChannelCategory.MUSIC, vevoPop.category)
+    assertEquals("https://example.com/vevo.png", vevoPop.tvgLogo)
+    assertEquals("https://example.com/vevo-pop.m3u8", vevoPop.streamUrl)
+
+    val tennis = parsed[2]
+    assertEquals("TENNIS HD", tennis.displayTitle)
+    assertNull(tennis.tvgLogo)
+  }
+
+  @Test
+  fun findBackupChannel_selectsAlternativeWorkingStreamForSameChannel() {
+    val sample = """
+      #EXTM3U
+      #EXTINF:-1 tvg-id="TMC.fr" group-title="GENERALISTE",TMC FHD
+      http://dead-xtream.example/116087
+      #EXTINF:-1 tvg-id="TMC.fr" group-title="GENERALISTE",TMC
+      https://backup.example/tmc.m3u8
+    """.trimIndent()
+    val channels = M3uParser.parse(sample)
+    val backup = IptvViewModel.findBackupChannel(channels, channels[0], setOf(channels[0].id))
+    assertNotNull(backup)
+    assertEquals("https://backup.example/tmc.m3u8", backup?.streamUrl)
+  }
+
+  @Test
+  fun remoteSources_contains10UniquePlaylists_andSourceTagPrefixesGroup() {
+    assertEquals(10, DefaultPlaylists.REMOTE_SOURCES.size)
+    assertEquals(10, DefaultPlaylists.REMOTE_SOURCES.map { it.url }.toSet().size)
+    assertTrue(
+      DefaultPlaylists.REMOTE_SOURCES.any {
+        it.url == "https://iptv-org.github.io/iptv/regions/afr.m3u" && it.countryTag == "AFR"
+      }
+    )
+    assertTrue(
+      DefaultPlaylists.REMOTE_SOURCES.any {
+        it.url == "https://iptv-org.github.io/iptv/countries/za.m3u" && it.countryTag == "ZA"
+      }
+    )
 
     val sampleFreeTv = """
       #EXTM3U

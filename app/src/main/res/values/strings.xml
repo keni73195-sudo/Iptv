@@ -41,7 +41,12 @@
     <string name="cd_import_playlist">Importer une playlist M3U</string>
     <string name="cd_clear_search">Effacer la recherche</string>
     <string name="channels_count_format">%1$d chaînes disponibles</string>
-    <string name="sync_all_sources">Tout fusionner (8 sources)</string>
+    <string name="sync_all_sources">Tout fusionner (%1$d sources)</string>
     <string name="syncing_sources_status">Synchronisation des playlists…</string>
-    <string name="sources_section_title">Sources intégrées (BE, CA, FR, NG, UK, US)</string>
+    <string name="sources_section_title">Sources intégrées (AFR, BE, CA, FR, NG, UK, US, ZA)</string>
+    <string name="mini_preview_expand">Revenir au lecteur</string>
+    <string name="jump_to_live_channel">Chaîne active</string>
+    <string name="reset_filters">Tout afficher</string>
+    <string name="now_playing_label">À L\'ANTENNE</string>
+    <string name="preview_badge">APERÇU</string>
 </resources>

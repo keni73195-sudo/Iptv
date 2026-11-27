@@ -11,6 +11,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,19 +31,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.VolumeOff
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.AspectRatio
-import androidx.compose.material.icons.rounded.ErrorOutline
-import androidx.compose.material.icons.rounded.Fullscreen
-import androidx.compose.material.icons.rounded.FullscreenExit
-import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.SkipNext
-import androidx.compose.material.icons.rounded.SkipPrevious
-import androidx.compose.material.icons.rounded.Star
-import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -63,10 +53,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -108,44 +106,79 @@ fun VideoPlayerStage(
   onCycleAspectRatio: () -> Unit,
   onToggleFullscreen: () -> Unit,
   modifier: Modifier = Modifier,
+  isMiniPreview: Boolean = false,
+  onExpandFromPreview: () -> Unit = {},
 ) {
   var controlsVisible by remember { mutableStateOf(true) }
   var interactionTick by remember { mutableIntStateOf(0) }
 
-  LaunchedEffect(playbackStatus, interactionTick, activeChannel?.id) {
-    if (playbackStatus is PlaybackStatus.Playing) {
+  LaunchedEffect(playbackStatus, interactionTick, activeChannel?.id, isMiniPreview) {
+    if (playbackStatus is PlaybackStatus.Playing && !isMiniPreview) {
       controlsVisible = true
       delay(3_500L)
       controlsVisible = false
+    } else if (!isMiniPreview) {
+      controlsVisible = true
     } else {
       controlsVisible = true
     }
   }
 
   val resizeMode =
-    when (aspectRatioMode) {
-      AspectRatioMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-      AspectRatioMode.FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-      AspectRatioMode.ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+    when {
+      isMiniPreview -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+      aspectRatioMode == AspectRatioMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+      aspectRatioMode == AspectRatioMode.FILL -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+      else -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
     }
 
   Box(
     modifier =
       modifier
         .background(Color.Black)
-        .clickable(
-          interactionSource = remember { MutableInteractionSource() },
-          indication = null,
-        ) {
-          controlsVisible = !controlsVisible
-          if (controlsVisible) interactionTick++
-        }
+        .then(
+          if (isMiniPreview) {
+            Modifier
+          } else {
+            Modifier
+              .onPreviewKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyDown) {
+                  val isNavKey =
+                    keyEvent.key == Key.DirectionCenter ||
+                      keyEvent.key == Key.Enter ||
+                      keyEvent.key == Key.NumPadEnter ||
+                      keyEvent.key == Key.DirectionUp ||
+                      keyEvent.key == Key.DirectionDown ||
+                      keyEvent.key == Key.DirectionLeft ||
+                      keyEvent.key == Key.DirectionRight
+                  if (isNavKey) {
+                    val wasHidden = !controlsVisible
+                    controlsVisible = true
+                    interactionTick++
+                    if (wasHidden && (keyEvent.key == Key.DirectionCenter || keyEvent.key == Key.Enter || keyEvent.key == Key.NumPadEnter)) {
+                      return@onPreviewKeyEvent true
+                    }
+                  }
+                }
+                false
+              }
+              .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+              ) {
+                controlsVisible = !controlsVisible
+                if (controlsVisible) interactionTick++
+              }
+          }
+        )
   ) {
     AndroidView(
       factory = { context ->
         PlayerView(context).apply {
           useController = false
           keepScreenOn = true
+          isFocusable = false
+          isFocusableInTouchMode = false
           setShutterBackgroundColor(android.graphics.Color.BLACK)
           layoutParams =
             FrameLayout.LayoutParams(
@@ -166,332 +199,590 @@ fun VideoPlayerStage(
       modifier = Modifier.fillMaxSize(),
     )
 
-    // Subtle top and bottom cinema scrims when controls are visible
-    AnimatedVisibility(
-      visible = controlsVisible || playbackStatus !is PlaybackStatus.Playing,
-      enter = fadeIn(tween(180)),
-      exit = fadeOut(tween(260)),
-      modifier = Modifier.fillMaxSize(),
-    ) {
-      Box(
-        modifier =
-          Modifier.fillMaxSize()
-            .background(
-              Brush.verticalGradient(
-                0f to Color.Black.copy(alpha = 0.72f),
-                0.35f to Color.Transparent,
-                0.65f to Color.Transparent,
-                1f to Color.Black.copy(alpha = 0.82f),
-              )
-            )
+    if (isMiniPreview) {
+      MiniPreviewOverlay(
+        activeChannel = activeChannel,
+        playbackStatus = playbackStatus,
+        isMuted = isMuted,
+        onTogglePlayPause = onTogglePlayPause,
+        onRetry = onRetry,
+        onToggleMute = onToggleMute,
+        onNextChannel = onNextChannel,
+        onExpandFromPreview = onExpandFromPreview,
+      )
+    } else {
+      AnimatedVisibility(
+        visible = controlsVisible || playbackStatus !is PlaybackStatus.Playing,
+        enter = fadeIn(tween(180)),
+        exit = fadeOut(tween(260)),
+        modifier = Modifier.fillMaxSize(),
       ) {
-        val overlayPaddingModifier =
-          if (isFullscreen) {
-            Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp, vertical = 10.dp)
-          } else {
-            Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 8.dp)
-          }
-
-        Column(
-          modifier = overlayPaddingModifier,
-          verticalArrangement = Arrangement.SpaceBetween,
-        ) {
-          // Top Overlay: Live Indicator + Active Channel + Quick Actions
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-          ) {
-            Row(
-              modifier = Modifier.weight(1f),
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              LiveBadge(isLive = playbackStatus is PlaybackStatus.Playing)
-              Spacer(modifier = Modifier.width(8.dp))
-              if (activeChannel != null) {
-                Text(
-                  text = activeChannel.displayTitle,
-                  style = MaterialTheme.typography.titleMedium,
-                  color = InkPrimary,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                  modifier = Modifier.weight(1f, fill = false),
+        Box(
+          modifier =
+            Modifier.fillMaxSize()
+              .background(
+                Brush.verticalGradient(
+                  0f to Color.Black.copy(alpha = 0.76f),
+                  0.35f to Color.Transparent,
+                  0.65f to Color.Transparent,
+                  1f to Color.Black.copy(alpha = 0.86f),
                 )
-              }
-              val badgeText = liveResolutionLabel ?: activeChannel?.resolution
-              if (!badgeText.isNullOrBlank()) {
-                Spacer(modifier = Modifier.width(8.dp))
-                Surface(
-                  color = CyanBroadcast.copy(alpha = 0.16f),
-                  shape = RoundedCornerShape(6.dp),
-                  border = androidx.compose.foundation.BorderStroke(1.dp, CyanBroadcast.copy(alpha = 0.45f)),
-                ) {
-                  Text(
-                    text = badgeText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = CyanBroadcast,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                  )
-                }
-              }
+              )
+        ) {
+          val overlayPaddingModifier =
+            if (isFullscreen) {
+              Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp, vertical = 10.dp)
+            } else {
+              Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              if (activeChannel != null) {
+          Column(
+            modifier = overlayPaddingModifier,
+            verticalArrangement = Arrangement.SpaceBetween,
+          ) {
+            // Top Overlay: Live Indicator + Active Channel + Quick Actions
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                LiveBadge(isLive = playbackStatus is PlaybackStatus.Playing)
+                Spacer(modifier = Modifier.width(8.dp))
+                if (activeChannel != null) {
+                  Text(
+                    text = activeChannel.displayTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = InkPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                  )
+                }
+                val badgeText = liveResolutionLabel ?: activeChannel?.resolution
+                if (!badgeText.isNullOrBlank()) {
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Surface(
+                    color = CyanBroadcast.copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, CyanBroadcast.copy(alpha = 0.45f)),
+                  ) {
+                    Text(
+                      text = badgeText,
+                      style = MaterialTheme.typography.labelSmall,
+                      color = CyanBroadcast,
+                      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                  }
+                }
+              }
+
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                if (activeChannel != null) {
+                  IconButton(
+                    onClick = {
+                      interactionTick++
+                      onToggleFavorite()
+                    },
+                    modifier =
+                      Modifier
+                        .minimumInteractiveComponentSize()
+                        .then(tvFocusHighlight())
+                        .testTag("player_favorite_button"),
+                  ) {
+                    Icon(
+                      painter = painterResource(if (isFavorite) R.drawable.ic_star else R.drawable.ic_star_border),
+                      contentDescription = stringResource(R.string.cd_favorite_toggle),
+                      tint = if (isFavorite) AmberFavorite else InkPrimary,
+                    )
+                  }
+                }
+
                 IconButton(
                   onClick = {
                     interactionTick++
-                    onToggleFavorite()
+                    onCycleAspectRatio()
                   },
-                  modifier = Modifier.minimumInteractiveComponentSize().testTag("player_favorite_button"),
+                  modifier =
+                    Modifier
+                      .minimumInteractiveComponentSize()
+                      .then(tvFocusHighlight())
+                      .testTag("player_aspect_button"),
                 ) {
                   Icon(
-                    imageVector = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
-                    contentDescription = stringResource(R.string.cd_favorite_toggle),
-                    tint = if (isFavorite) AmberFavorite else InkPrimary,
+                    painter = painterResource(R.drawable.ic_aspect_ratio),
+                    contentDescription = stringResource(R.string.cd_aspect_ratio),
+                    tint = InkPrimary,
                   )
                 }
-              }
-
-              IconButton(
-                onClick = {
-                  interactionTick++
-                  onCycleAspectRatio()
-                },
-                modifier = Modifier.minimumInteractiveComponentSize().testTag("player_aspect_button"),
-              ) {
-                Icon(
-                  imageVector = Icons.Rounded.AspectRatio,
-                  contentDescription = stringResource(R.string.cd_aspect_ratio),
-                  tint = InkPrimary,
-                )
               }
             }
-          }
 
-          // Center Stage: Buffering / Error / Play-Pause
-          Box(
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            contentAlignment = Alignment.Center,
-          ) {
-            when (playbackStatus) {
-              is PlaybackStatus.Buffering -> {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                  CircularProgressIndicator(
-                    color = CyanBroadcast,
-                    strokeWidth = 3.dp,
-                    modifier = Modifier.size(40.dp),
-                  )
-                  Spacer(modifier = Modifier.height(8.dp))
-                  Text(
-                    text = stringResource(R.string.buffering_status),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = InkPrimary,
-                  )
-                }
-              }
-              is PlaybackStatus.Error -> {
-                Surface(
-                  color = ObsidianBg.copy(alpha = 0.90f),
-                  shape = RoundedCornerShape(14.dp),
-                  border = androidx.compose.foundation.BorderStroke(1.dp, CrimsonLive.copy(alpha = 0.5f)),
-                  modifier = Modifier.padding(horizontal = 16.dp),
-                ) {
-                  Column(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                  ) {
-                    Icon(
-                      imageVector = Icons.Rounded.ErrorOutline,
-                      contentDescription = null,
-                      tint = CrimsonLive,
-                      modifier = Modifier.size(28.dp),
+            // Center Stage: Buffering / Error / Play-Pause
+            Box(
+              modifier = Modifier.fillMaxWidth().weight(1f),
+              contentAlignment = Alignment.Center,
+            ) {
+              when (playbackStatus) {
+                is PlaybackStatus.Buffering -> {
+                  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(
+                      color = CyanBroadcast,
+                      strokeWidth = 3.dp,
+                      modifier = Modifier.size(38.dp),
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                      text = stringResource(R.string.error_playback_title),
-                      style = MaterialTheme.typography.titleMedium,
+                      text = stringResource(R.string.buffering_status),
+                      style = MaterialTheme.typography.bodyMedium,
                       color = InkPrimary,
                     )
-                    Text(
-                      text = playbackStatus.message,
-                      style = MaterialTheme.typography.bodyMedium,
-                      color = InkSecondary,
-                      textAlign = TextAlign.Center,
-                      maxLines = 2,
-                      overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Button(
-                      onClick = {
-                        interactionTick++
-                        onRetry()
-                      },
-                      colors = ButtonDefaults.buttonColors(containerColor = CyanBroadcast, contentColor = ObsidianBg),
-                      modifier = Modifier.testTag("player_retry_button"),
+                  }
+                }
+                is PlaybackStatus.Error -> {
+                  Surface(
+                    color = ObsidianBg.copy(alpha = 0.92f),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, CrimsonLive.copy(alpha = 0.55f)),
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                  ) {
+                    Column(
+                      modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                       Icon(
-                        imageVector = Icons.Rounded.Refresh,
+                        painter = painterResource(R.drawable.ic_error_outline),
                         contentDescription = null,
-                        modifier = Modifier.size(18.dp),
+                        tint = CrimsonLive,
+                        modifier = Modifier.size(26.dp),
                       )
-                      Spacer(modifier = Modifier.width(6.dp))
-                      Text(text = stringResource(R.string.retry_button))
+                      Spacer(modifier = Modifier.height(4.dp))
+                      Text(
+                        text = stringResource(R.string.error_playback_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = InkPrimary,
+                      )
+                      Text(
+                        text = playbackStatus.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = InkSecondary,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                      )
+                      Spacer(modifier = Modifier.height(10.dp))
+                      Button(
+                        onClick = {
+                          interactionTick++
+                          onRetry()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyanBroadcast, contentColor = ObsidianBg),
+                        modifier = Modifier.testTag("player_retry_button"),
+                      ) {
+                        Icon(
+                          imageVector = Icons.Rounded.Refresh,
+                          contentDescription = null,
+                          modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(text = stringResource(R.string.retry_button))
+                      }
+                    }
+                  }
+                }
+                else -> {
+                  val isPlaying = playbackStatus is PlaybackStatus.Playing
+                  var isCenterFocused by remember { mutableStateOf(false) }
+                  Surface(
+                    color = ObsidianBg.copy(alpha = if (isCenterFocused) 0.88f else 0.68f),
+                    shape = CircleShape,
+                    border =
+                      BorderStroke(
+                        width = if (isCenterFocused) 2.dp else 1.dp,
+                        color = if (isCenterFocused) CyanBroadcast else BorderSlate,
+                      ),
+                    modifier =
+                      Modifier
+                        .size(54.dp)
+                        .clip(CircleShape)
+                        .onFocusChanged { isCenterFocused = it.isFocused }
+                        .clickable {
+                          interactionTick++
+                          onTogglePlayPause()
+                        }
+                        .testTag("player_center_play_pause_button"),
+                  ) {
+                    Box(contentAlignment = Alignment.Center) {
+                      if (isPlaying) {
+                        Icon(
+                          painter = painterResource(R.drawable.ic_pause),
+                          contentDescription = stringResource(R.string.cd_play_pause),
+                          tint = InkPrimary,
+                          modifier = Modifier.size(28.dp),
+                        )
+                      } else {
+                        Icon(
+                          imageVector = Icons.Rounded.PlayArrow,
+                          contentDescription = stringResource(R.string.cd_play_pause),
+                          tint = InkPrimary,
+                          modifier = Modifier.size(28.dp),
+                        )
+                      }
                     }
                   }
                 }
               }
-              else -> {
-                val isPlaying = playbackStatus is PlaybackStatus.Playing
-                Surface(
-                  color = ObsidianBg.copy(alpha = 0.65f),
-                  shape = CircleShape,
-                  border = androidx.compose.foundation.BorderStroke(1.dp, BorderSlate),
+            }
+
+            // Bottom Transport Bar
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                  onClick = {
+                    interactionTick++
+                    onPreviousChannel()
+                  },
                   modifier =
                     Modifier
-                      .size(56.dp)
-                      .clip(CircleShape)
-                      .clickable {
-                        interactionTick++
-                        onTogglePlayPause()
-                      }
-                      .testTag("player_center_play_pause_button"),
+                      .minimumInteractiveComponentSize()
+                      .then(tvFocusHighlight())
+                      .testTag("player_prev_button"),
                 ) {
-                  Box(contentAlignment = Alignment.Center) {
+                  Icon(
+                    painter = painterResource(R.drawable.ic_skip_previous),
+                    contentDescription = stringResource(R.string.cd_previous_channel),
+                    tint = InkPrimary,
+                  )
+                }
+
+                IconButton(
+                  onClick = {
+                    interactionTick++
+                    onTogglePlayPause()
+                  },
+                  modifier =
+                    Modifier
+                      .minimumInteractiveComponentSize()
+                      .then(tvFocusHighlight())
+                      .testTag("player_play_pause_button"),
+                ) {
+                  if (playbackStatus is PlaybackStatus.Playing) {
                     Icon(
-                      imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                      painter = painterResource(R.drawable.ic_pause),
                       contentDescription = stringResource(R.string.cd_play_pause),
                       tint = InkPrimary,
-                      modifier = Modifier.size(30.dp),
+                    )
+                  } else {
+                    Icon(
+                      imageVector = Icons.Rounded.PlayArrow,
+                      contentDescription = stringResource(R.string.cd_play_pause),
+                      tint = InkPrimary,
                     )
                   }
                 }
-              }
-            }
-          }
 
-          // Bottom Transport Bar
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-          ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              IconButton(
-                onClick = {
-                  interactionTick++
-                  onPreviousChannel()
-                },
-                modifier = Modifier.minimumInteractiveComponentSize().testTag("player_prev_button"),
-              ) {
-                Icon(
-                  imageVector = Icons.Rounded.SkipPrevious,
-                  contentDescription = stringResource(R.string.cd_previous_channel),
-                  tint = InkPrimary,
-                )
-              }
-
-              IconButton(
-                onClick = {
-                  interactionTick++
-                  onTogglePlayPause()
-                },
-                modifier = Modifier.minimumInteractiveComponentSize().testTag("player_play_pause_button"),
-              ) {
-                Icon(
-                  imageVector =
-                    if (playbackStatus is PlaybackStatus.Playing) {
-                      Icons.Rounded.Pause
-                    } else {
-                      Icons.Rounded.PlayArrow
-                    },
-                  contentDescription = stringResource(R.string.cd_play_pause),
-                  tint = InkPrimary,
-                )
-              }
-
-              IconButton(
-                onClick = {
-                  interactionTick++
-                  onNextChannel()
-                },
-                modifier = Modifier.minimumInteractiveComponentSize().testTag("player_next_button"),
-              ) {
-                Icon(
-                  imageVector = Icons.Rounded.SkipNext,
-                  contentDescription = stringResource(R.string.cd_next_channel),
-                  tint = InkPrimary,
-                )
-              }
-
-              Spacer(modifier = Modifier.width(4.dp))
-
-              val modeLabel =
-                when (aspectRatioMode) {
-                  AspectRatioMode.FIT -> "FIT"
-                  AspectRatioMode.FILL -> "FILL"
-                  AspectRatioMode.ZOOM -> "ZOOM"
+                IconButton(
+                  onClick = {
+                    interactionTick++
+                    onNextChannel()
+                  },
+                  modifier =
+                    Modifier
+                      .minimumInteractiveComponentSize()
+                      .then(tvFocusHighlight())
+                      .testTag("player_next_button"),
+                ) {
+                  Icon(
+                    painter = painterResource(R.drawable.ic_skip_next),
+                    contentDescription = stringResource(R.string.cd_next_channel),
+                    tint = InkPrimary,
+                  )
                 }
-              Text(
-                text = modeLabel,
-                style = MaterialTheme.typography.labelSmall,
-                color = InkSecondary,
-                modifier =
-                  Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .border(1.dp, BorderSlate, RoundedCornerShape(4.dp))
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-              )
-            }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              IconButton(
-                onClick = {
-                  interactionTick++
-                  onToggleMute()
-                },
-                modifier = Modifier.minimumInteractiveComponentSize().testTag("player_mute_button"),
-              ) {
-                Icon(
-                  imageVector =
-                    if (isMuted) {
-                      Icons.AutoMirrored.Rounded.VolumeOff
-                    } else {
-                      Icons.AutoMirrored.Rounded.VolumeUp
-                    },
-                  contentDescription = stringResource(R.string.cd_mute_unmute),
-                  tint = if (isMuted) AmberFavorite else InkPrimary,
+                Spacer(modifier = Modifier.width(4.dp))
+
+                val modeLabel =
+                  when (aspectRatioMode) {
+                    AspectRatioMode.FIT -> "FIT"
+                    AspectRatioMode.FILL -> "FILL"
+                    AspectRatioMode.ZOOM -> "ZOOM"
+                  }
+                Text(
+                  text = modeLabel,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = InkSecondary,
+                  modifier =
+                    Modifier
+                      .clip(RoundedCornerShape(4.dp))
+                      .border(1.dp, BorderSlate, RoundedCornerShape(4.dp))
+                      .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
               }
 
-              IconButton(
-                onClick = {
-                  interactionTick++
-                  onToggleFullscreen()
-                },
-                modifier = Modifier.minimumInteractiveComponentSize().testTag("player_fullscreen_button"),
-              ) {
-                Icon(
-                  imageVector =
-                    if (isFullscreen) {
-                      Icons.Rounded.FullscreenExit
-                    } else {
-                      Icons.Rounded.Fullscreen
-                    },
-                  contentDescription =
-                    if (isFullscreen) {
-                      stringResource(R.string.cd_exit_fullscreen)
-                    } else {
-                      stringResource(R.string.cd_fullscreen)
-                    },
-                  tint = InkPrimary,
-                )
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                  onClick = {
+                    interactionTick++
+                    onToggleMute()
+                  },
+                  modifier =
+                    Modifier
+                      .minimumInteractiveComponentSize()
+                      .then(tvFocusHighlight())
+                      .testTag("player_mute_button"),
+                ) {
+                  Icon(
+                    painter =
+                      painterResource(
+                        if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_up
+                      ),
+                    contentDescription = stringResource(R.string.cd_mute_unmute),
+                    tint = if (isMuted) AmberFavorite else InkPrimary,
+                  )
+                }
+
+                IconButton(
+                  onClick = {
+                    interactionTick++
+                    onToggleFullscreen()
+                  },
+                  modifier =
+                    Modifier
+                      .minimumInteractiveComponentSize()
+                      .then(tvFocusHighlight())
+                      .testTag("player_fullscreen_button"),
+                ) {
+                  Icon(
+                    painter =
+                      painterResource(
+                        if (isFullscreen) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen
+                      ),
+                    contentDescription =
+                      if (isFullscreen) {
+                        stringResource(R.string.cd_exit_fullscreen)
+                      } else {
+                        stringResource(R.string.cd_fullscreen)
+                      },
+                    tint = InkPrimary,
+                  )
+                }
               }
             }
           }
         }
       }
     }
+  }
+}
+
+@Composable
+private fun MiniPreviewOverlay(
+  activeChannel: Channel?,
+  playbackStatus: PlaybackStatus,
+  isMuted: Boolean,
+  onTogglePlayPause: () -> Unit,
+  onRetry: () -> Unit,
+  onToggleMute: () -> Unit,
+  onNextChannel: () -> Unit,
+  onExpandFromPreview: () -> Unit,
+) {
+  Box(
+    modifier =
+      Modifier.fillMaxSize()
+        .background(
+          Brush.verticalGradient(
+            0f to Color.Black.copy(alpha = 0.72f),
+            0.45f to Color.Transparent,
+            1f to Color.Black.copy(alpha = 0.88f),
+          )
+        )
+        .padding(6.dp)
+  ) {
+    // Top drag handle + bar inside floating preview
+    Column(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
+      Box(
+        modifier =
+          Modifier
+            .align(Alignment.CenterHorizontally)
+            .padding(bottom = 3.dp)
+            .width(30.dp)
+            .height(3.dp)
+            .clip(CircleShape)
+            .background(InkPrimary.copy(alpha = 0.48f))
+      )
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Row(
+          modifier = Modifier.weight(1f),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Box(
+            modifier =
+              Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(if (playbackStatus is PlaybackStatus.Playing) CrimsonLive else CyanBroadcast)
+          )
+          Spacer(modifier = Modifier.width(5.dp))
+          Text(
+            text = activeChannel?.displayTitle ?: stringResource(R.string.preview_badge),
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = InkPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+
+        Surface(
+          color = ObsidianBg.copy(alpha = 0.75f),
+          shape = CircleShape,
+          modifier =
+            Modifier
+              .size(28.dp)
+              .clip(CircleShape)
+              .clickable(onClick = onExpandFromPreview)
+              .testTag("mini_preview_expand_button"),
+        ) {
+          Box(contentAlignment = Alignment.Center) {
+            Icon(
+              painter = painterResource(R.drawable.ic_open_in_full),
+              contentDescription = stringResource(R.string.mini_preview_expand),
+              tint = InkPrimary,
+              modifier = Modifier.size(15.dp),
+            )
+          }
+        }
+      }
+    }
+
+    // Center mini status indicator (Buffering / Error)
+    if (playbackStatus is PlaybackStatus.Buffering) {
+      CircularProgressIndicator(
+        color = CyanBroadcast,
+        strokeWidth = 2.5.dp,
+        modifier = Modifier.size(24.dp).align(Alignment.Center),
+      )
+    } else if (playbackStatus is PlaybackStatus.Error) {
+      Surface(
+        color = ObsidianBg.copy(alpha = 0.85f),
+        shape = CircleShape,
+        border = BorderStroke(1.dp, CrimsonLive.copy(alpha = 0.7f)),
+        modifier =
+          Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .align(Alignment.Center)
+            .clickable(onClick = onRetry),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Icon(
+            imageVector = Icons.Rounded.Refresh,
+            contentDescription = stringResource(R.string.retry_button),
+            tint = CrimsonLive,
+            modifier = Modifier.size(18.dp),
+          )
+        }
+      }
+    }
+
+    // Bottom quick controls inside floating preview
+    Row(
+      modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+      Surface(
+        color = CyanBroadcast.copy(alpha = 0.16f),
+        shape = RoundedCornerShape(4.dp),
+        border = BorderStroke(0.5.dp, CyanBroadcast.copy(alpha = 0.45f)),
+      ) {
+        Text(
+          text = stringResource(R.string.preview_badge),
+          style = MaterialTheme.typography.labelSmall,
+          color = CyanBroadcast,
+          modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+        )
+      }
+
+      Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        MiniPreviewActionChip(
+          onClick = onTogglePlayPause,
+          testTag = "mini_preview_play_pause",
+        ) {
+          if (playbackStatus is PlaybackStatus.Playing) {
+            Icon(
+              painter = painterResource(R.drawable.ic_pause),
+              contentDescription = stringResource(R.string.cd_play_pause),
+              tint = InkPrimary,
+              modifier = Modifier.size(16.dp),
+            )
+          } else {
+            Icon(
+              imageVector = Icons.Rounded.PlayArrow,
+              contentDescription = stringResource(R.string.cd_play_pause),
+              tint = InkPrimary,
+              modifier = Modifier.size(16.dp),
+            )
+          }
+        }
+        MiniPreviewActionChip(
+          onClick = onToggleMute,
+          testTag = "mini_preview_mute",
+        ) {
+          Icon(
+            painter =
+              painterResource(
+                if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_up
+              ),
+            contentDescription = stringResource(R.string.cd_mute_unmute),
+            tint = if (isMuted) AmberFavorite else InkPrimary,
+            modifier = Modifier.size(16.dp),
+          )
+        }
+        MiniPreviewActionChip(
+          onClick = onNextChannel,
+          testTag = "mini_preview_next",
+        ) {
+          Icon(
+            painter = painterResource(R.drawable.ic_skip_next),
+            contentDescription = stringResource(R.string.cd_next_channel),
+            tint = InkPrimary,
+            modifier = Modifier.size(16.dp),
+          )
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun MiniPreviewActionChip(
+  onClick: () -> Unit,
+  testTag: String,
+  content: @Composable () -> Unit,
+) {
+  Surface(
+    color = ObsidianBg.copy(alpha = 0.78f),
+    shape = CircleShape,
+    border = BorderStroke(0.8.dp, BorderSlate),
+    modifier =
+      Modifier
+        .size(28.dp)
+        .clip(CircleShape)
+        .clickable(onClick = onClick)
+        .testTag(testTag),
+  ) {
+    Box(contentAlignment = Alignment.Center) { content() }
   }
 }
 
@@ -511,12 +802,12 @@ private fun LiveBadge(isLive: Boolean) {
     )
 
   Surface(
-    color = if (isLive) CrimsonLive.copy(alpha = 0.20f) else BorderSlate.copy(alpha = 0.6f),
+    color = if (isLive) CrimsonLive.copy(alpha = 0.22f) else BorderSlate.copy(alpha = 0.6f),
     shape = RoundedCornerShape(6.dp),
     border =
-      androidx.compose.foundation.BorderStroke(
+      BorderStroke(
         1.dp,
-        if (isLive) CrimsonLive.copy(alpha = 0.7f) else BorderSlate,
+        if (isLive) CrimsonLive.copy(alpha = 0.75f) else BorderSlate,
       ),
   ) {
     Row(
@@ -539,4 +830,18 @@ private fun LiveBadge(isLive: Boolean) {
       )
     }
   }
+}
+
+@Composable
+private fun tvFocusHighlight(shape: RoundedCornerShape = CircleShape): Modifier {
+  var isFocused by remember { mutableStateOf(false) }
+  return Modifier
+    .onFocusChanged { isFocused = it.isFocused }
+    .then(
+      if (isFocused) {
+        Modifier.border(2.dp, CyanBroadcast, shape)
+      } else {
+        Modifier
+      }
+    )
 }

@@ -59,24 +59,32 @@ https://ncdn-live-bfm.pfd.sfr.net/shls/LIVE${'$'}BFM_TOULONVAR/index.m3u8?end=EN
 https://ncdn-live-bfm.pfd.sfr.net/shls/LIVE${'$'}BFM_TV/index.m3u8?end=END&start=LIVE"""
 
   fun loadBundledPlaylistM3u(context: Context): String {
-    val extraM3u =
-      runCatching {
-        context.resources.openRawResource(R.raw.fr_channels_playlist).bufferedReader().use {
-          it.readText()
+    val rawPlaylists =
+      listOf(R.raw.fr_channels_playlist, R.raw.fr_multi_connection_playlist).map { resId ->
+        runCatching {
+          context.resources.openRawResource(resId).bufferedReader().use { it.readText() }
         }
+          .getOrDefault("")
       }
-        .getOrDefault("")
 
     return buildString {
       appendLine(BFM_M3U.trim())
-      if (extraM3u.isNotBlank()) {
-        appendLine(extraM3u.trim().removePrefix("#EXTM3U").trim())
+      rawPlaylists.forEach { raw ->
+        if (raw.isNotBlank()) {
+          appendLine(raw.trim().removePrefix("#EXTM3U").trim())
+        }
       }
     }
   }
 
   val REMOTE_SOURCES =
     listOf(
+      PlaylistPreset(
+        id = "iptv_org_afr",
+        label = "Afrique (iptv-org)",
+        countryTag = "AFR",
+        url = "https://iptv-org.github.io/iptv/regions/afr.m3u",
+      ),
       PlaylistPreset(
         id = "freetv_be",
         label = "Belgique (Free-TV)",
@@ -124,6 +132,12 @@ https://ncdn-live-bfm.pfd.sfr.net/shls/LIVE${'$'}BFM_TV/index.m3u8?end=END&start
         label = "USA (Free-TV)",
         countryTag = "US",
         url = "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_usa.m3u8",
+      ),
+      PlaylistPreset(
+        id = "iptv_org_za",
+        label = "Afrique du Sud (iptv-org)",
+        countryTag = "ZA",
+        url = "https://iptv-org.github.io/iptv/countries/za.m3u",
       ),
     )
 

@@ -12,6 +12,7 @@ object M3uParser {
     if (m3uContent.isBlank()) return emptyList()
 
     val channels = mutableListOf<Channel>()
+    val seenUrls = HashSet<String>()
     var pendingTvgId = ""
     var pendingLogo: String? = null
     var pendingGroup: String? = null
@@ -59,6 +60,16 @@ object M3uParser {
         }
         line.startsWith("http://", ignoreCase = true) ||
           line.startsWith("https://", ignoreCase = true) -> {
+          val cleanUrl = sanitizeStreamUrl(line)
+          if (!seenUrls.add(cleanUrl)) {
+            pendingTvgId = ""
+            pendingLogo = null
+            pendingGroup = null
+            pendingTitle = null
+            pendingUserAgent = null
+            pendingReferrer = null
+            continue
+          }
           val rawName = pendingTitle?.takeIf { it.isNotBlank() } ?: "Flux ${channels.size + 1}"
           val resMatch = resolutionRegex.find(rawName)
           val resolution = resMatch?.groupValues?.get(1)?.uppercase()
@@ -68,7 +79,7 @@ object M3uParser {
           val baseId =
             pendingTvgId.takeIf { it.isNotBlank() }
               ?: cleanTitle.lowercase().replace(Regex("[^a-z0-9]+"), "_")
-          val stableId = "${baseId}_${abs(line.hashCode())}"
+          val stableId = "${baseId}_${abs(cleanUrl.hashCode())}"
 
           val category = classifyCategory(cleanTitle, pendingGroup)
           channels.add(
@@ -83,7 +94,7 @@ object M3uParser {
               groupTitle = pendingGroup,
               userAgent = pendingUserAgent,
               referrer = pendingReferrer,
-              streamUrl = line,
+              streamUrl = cleanUrl,
               category = category,
               monogram = buildMonogram(cleanTitle),
               accentIndex = abs(stableId.hashCode()) % 6,
@@ -103,8 +114,19 @@ object M3uParser {
     return channels
   }
 
+  private fun sanitizeStreamUrl(rawUrl: String): String {
+    val trimmed = rawUrl.trim()
+    val origineIdx = trimmed.indexOf("#origine", ignoreCase = true)
+    return if (origineIdx > 0) trimmed.substring(0, origineIdx).trim() else trimmed
+  }
+
   private fun sanitizeLogoUrl(rawLogo: String?): String? {
     val trimmed = rawLogo?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    if (!trimmed.startsWith("http://", ignoreCase = true) &&
+      !trimmed.startsWith("https://", ignoreCase = true)
+    ) {
+      return null
+    }
     if (trimmed.endsWith("blank-icon.png", ignoreCase = true)) return null
     if (trimmed.endsWith(".svg", ignoreCase = true)) return null
     return trimmed
@@ -126,16 +148,12 @@ object M3uParser {
   }
 
   private fun findMetadataSeparatorIndex(extInfLine: String): Int {
-    var insideQuotes = false
-    for (i in extInfLine.indices) {
-      val ch = extInfLine[i]
-      if (ch == '"') {
-        insideQuotes = !insideQuotes
-      } else if (ch == ',' && !insideQuotes) {
-        return i
-      }
+    val lastQuote = extInfLine.lastIndexOf('"')
+    if (lastQuote >= 0) {
+      val commaAfterAttrs = extInfLine.indexOf(',', startIndex = lastQuote + 1)
+      if (commaAfterAttrs >= 0) return commaAfterAttrs
     }
-    return -1
+    return extInfLine.indexOf(',')
   }
 
   private fun classifyCategory(title: String, groupTitle: String?): ChannelCategory {
@@ -169,11 +187,13 @@ object M3uParser {
         lowerTitle.contains("discovery") ||
         lowerTitle.contains("nat geo") -> ChannelCategory.DOCUMENTARY
       lowerGroup.contains("music") ||
+        lowerGroup.contains("musique") ||
         lowerTitle.contains("mtv") ||
         lowerTitle.contains("trace ") ||
         lowerTitle.contains("nrj hits") -> ChannelCategory.MUSIC
       lowerGroup.contains("news") ||
         lowerGroup.contains("info") ||
+        lowerGroup.contains("actualit") ||
         lowerTitle.startsWith("bfm") ||
         lowerTitle.contains("c news") ||
         lowerTitle.contains("france 24") ||

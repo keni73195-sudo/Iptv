@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -36,7 +34,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -104,14 +104,14 @@ fun ImportPlaylistDialog(
             )
           } else {
             Icon(
-              imageVector = Icons.Rounded.Sync,
+              painter = painterResource(R.drawable.ic_sync),
               contentDescription = null,
               tint = CyanBroadcast,
               modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-              text = stringResource(R.string.sync_all_sources),
+              text = stringResource(R.string.sync_all_sources, DefaultPlaylists.REMOTE_SOURCES.size),
               color = CyanBroadcast,
             )
           }
@@ -130,14 +130,20 @@ fun ImportPlaylistDialog(
             )
             .forEach { (idx, title) ->
               val active = selectedTab == idx
+              var isFocused by remember { mutableStateOf(false) }
               Surface(
                 color = if (active) CyanBroadcast.copy(alpha = 0.18f) else ElevatedCard,
                 shape = RoundedCornerShape(10.dp),
-                border = BorderStroke(1.dp, if (active) CyanBroadcast else BorderSlate),
+                border =
+                  BorderStroke(
+                    if (isFocused) 2.dp else 1.dp,
+                    if (active || isFocused) CyanBroadcast else BorderSlate,
+                  ),
                 modifier =
                   Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
+                    .onFocusChanged { isFocused = it.isFocused }
                     .clickable { selectedTab = idx }
                     .testTag("import_tab_$idx"),
               ) {
@@ -184,13 +190,15 @@ fun ImportPlaylistDialog(
           Spacer(modifier = Modifier.height(6.dp))
           LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(DefaultPlaylists.ALL_PRESETS, key = { it.id }) { preset ->
+              var isFocused by remember { mutableStateOf(false) }
               Surface(
                 color = ElevatedCard,
                 shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(1.dp, BorderSlate),
+                border = BorderStroke(if (isFocused) 2.dp else 1.dp, if (isFocused) CyanBroadcast else BorderSlate),
                 modifier =
                   Modifier
                     .clip(RoundedCornerShape(8.dp))
+                    .onFocusChanged { isFocused = it.isFocused }
                     .clickable { urlInput = preset.url }
                     .testTag("import_preset_${preset.id}"),
               ) {
@@ -240,14 +248,20 @@ fun ImportPlaylistDialog(
             )
             .forEach { (isMerge, label) ->
               val active = mergeWithCurrent == isMerge
+              var isFocused by remember { mutableStateOf(false) }
               Surface(
                 color = if (active) CyanBroadcast.copy(alpha = 0.14f) else ElevatedCard,
                 shape = RoundedCornerShape(8.dp),
-                border = BorderStroke(1.dp, if (active) CyanBroadcast else BorderSlate),
+                border =
+                  BorderStroke(
+                    if (isFocused) 2.dp else 1.dp,
+                    if (active || isFocused) CyanBroadcast else BorderSlate,
+                  ),
                 modifier =
                   Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
+                    .onFocusChanged { isFocused = it.isFocused }
                     .clickable { mergeWithCurrent = isMerge },
               ) {
                 Text(

@@ -63,6 +63,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   val exoPlayer: Player
     get() = playerManager.player
 
+  private val attemptedFailoverIds = mutableSetOf<String>()
+
   private val _channels = MutableStateFlow<List<Channel>>(M3uParser.parse(DefaultPlaylists.BFM_M3U))
   private val _activeChannelId = MutableStateFlow<String?>(null)
   private val _selectedCategory = MutableStateFlow(ChannelCategory.ALL)
@@ -161,20 +163,34 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
       )
 
   init {
+    playerManager.onStreamFailure = { failedChannel -> tryFailoverBackup(failedChannel) }
+
     viewModelScope.launch {
       val savedCustomM3u = repository.loadCustomPlaylistM3u()
+      val alreadyAutoSynced = repository.hasAutoSyncedRemote.first()
       val initialChannels =
         withContext(Dispatchers.Default) {
+          val bundledChannels =
+            M3uParser.parse(DefaultPlaylists.loadBundledPlaylistM3u(getApplication()))
           if (!savedCustomM3u.isNullOrBlank()) {
             val parsed = M3uParser.parse(savedCustomM3u)
-            parsed.ifEmpty {
-              M3uParser.parse(DefaultPlaylists.loadBundledPlaylistM3u(getApplication()))
+            when {
+              parsed.isEmpty() -> bundledChannels
+              !alreadyAutoSynced -> {
+                val seenUrls = parsed.map { it.streamUrl }.toHashSet()
+                val newBundled = bundledChannels.filter { seenUrls.add(it.streamUrl) }
+                (parsed + newBundled).mapIndexed { index, ch -> ch.copy(number = index + 1) }
+              }
+              else -> parsed
             }
           } else {
-            M3uParser.parse(DefaultPlaylists.loadBundledPlaylistM3u(getApplication()))
+            bundledChannels
           }
         }
       _channels.value = initialChannels
+      if (!alreadyAutoSynced && !savedCustomM3u.isNullOrBlank()) {
+        repository.saveCustomPlaylistM3u(serializeToM3u(initialChannels))
+      }
 
       val lastId = repository.lastChannelId.first()
       val defaultChannel =
@@ -184,17 +200,33 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
       defaultChannel?.let { selectChannel(it) }
 
-      val alreadyAutoSynced = repository.hasAutoSyncedRemote.first()
-      if (savedCustomM3u.isNullOrBlank() && !alreadyAutoSynced) {
+      if (!alreadyAutoSynced) {
         syncRemoteSourcesInternal(closeDialogOnSuccess = false)
       }
     }
   }
 
   fun selectChannel(channel: Channel) {
+    attemptedFailoverIds.clear()
+    attemptedFailoverIds.add(channel.id)
+    playSelectedChannel(channel)
+  }
+
+  private fun playSelectedChannel(channel: Channel) {
     _activeChannelId.value = channel.id
     playerManager.playChannel(channel)
     viewModelScope.launch { repository.saveLastChannelId(channel.id) }
+  }
+
+  private fun tryFailoverBackup(failedChannel: Channel): Boolean {
+    attemptedFailoverIds.add(failedChannel.id)
+    if (attemptedFailoverIds.size >= MAX_FAILOVER_ATTEMPTS) return false
+
+    val backup = findBackupChannel(_channels.value, failedChannel, attemptedFailoverIds) ?: return false
+    attemptedFailoverIds.add(backup.id)
+    _feedbackBanner.value = "Flux indisponible, bascule vers ${backup.displayTitle}"
+    playSelectedChannel(backup)
+    return true
   }
 
   fun zapNext() {
@@ -215,7 +247,13 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
   fun togglePlayPause() = playerManager.togglePlayPause()
 
-  fun retryPlayback() = playerManager.retryCurrentChannel()
+  fun retryPlayback() {
+    attemptedFailoverIds.clear()
+    _activeChannelId.value
+      ?.let { activeId -> _channels.value.firstOrNull { it.id == activeId } }
+      ?.let { attemptedFailoverIds.add(it.id) }
+    playerManager.retryCurrentChannel()
+  }
 
   fun toggleMute() = playerManager.toggleMute()
 
@@ -420,5 +458,43 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   override fun onCleared() {
     playerManager.release()
     super.onCleared()
+  }
+
+  companion object {
+    private const val MAX_FAILOVER_ATTEMPTS = 4
+    private val qualitySuffixRegex =
+      Regex("""\b(FHD|UHD|HD|SD|4K|H265|HEVC|FR)\b""", RegexOption.IGNORE_CASE)
+
+    internal fun normalizeChannelKey(title: String): String =
+      title
+        .replace(Regex("^FR\\s*[:\\-]\\s*", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("\\([^)]*\\)"), "")
+        .replace(qualitySuffixRegex, "")
+        .replace(Regex("[^a-zA-Z0-9]+"), "")
+        .lowercase()
+
+    internal fun findBackupChannel(
+      allChannels: List<Channel>,
+      failedChannel: Channel,
+      excludedIds: Set<String>,
+    ): Channel? {
+      val targetTvgId =
+        failedChannel.tvgId.trim().takeIf { it.isNotBlank() && !it.equals("EPG N/A", ignoreCase = true) }
+      val targetKey = normalizeChannelKey(failedChannel.displayTitle)
+
+      val candidates =
+        allChannels.filter { candidate ->
+          if (candidate.id in excludedIds || candidate.streamUrl == failedChannel.streamUrl) {
+            return@filter false
+          }
+          val sameTvgId = targetTvgId != null && candidate.tvgId.equals(targetTvgId, ignoreCase = true)
+          val sameTitleKey =
+            targetKey.length >= 2 && normalizeChannelKey(candidate.displayTitle) == targetKey
+          sameTvgId || sameTitleKey
+        }
+
+      return candidates.firstOrNull { it.streamUrl.contains(".m3u8", ignoreCase = true) }
+        ?: candidates.firstOrNull()
+    }
   }
 }
