@@ -8,8 +8,8 @@ const fs = require("node:fs");
 
 let testEnv;
 const PROJECT_ID = process.env.GCP_PROJECT || "demo-no-project";
-const ADMIN_UID = "admin_sherif";
-const ADMIN_EMAIL = "sheriforouyo@gmail.com";
+const ADMIN_UID = "admin_big";
+const ADMIN_EMAIL = "big@gmail.com";
 const USER1_UID = "user_alpha_1";
 const USER2_UID = "user_beta_2";
 
@@ -436,3 +436,104 @@ test("Admin can list user_profiles, revoke a user, and clear revocation", async 
     })
   );
 });
+
+test("Admin manages remote playlist_sources and only active subscribers can read enabled sources", async () => {
+  const adminDb = adminContext().firestore();
+  const userDb = userContext(USER1_UID).firestore();
+  const now = new Date(Date.now() - 2000);
+
+  // Regular user without active subscription cannot read or write playlist_sources
+  await assertFails(userDb.collection("playlist_sources").where("enabled", "==", true).get());
+  await assertFails(
+    userDb.collection("playlist_sources").doc("src_user_1").set({
+      id: "src_user_1",
+      label: "User Hack",
+      url: "https://example.com/list.m3u",
+      countryTag: "FR",
+      forcedCategory: "",
+      forcedCountry: "",
+      forcedLanguage: "",
+      enabled: true,
+      createdByUid: USER1_UID,
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+
+  // Admin creates one enabled source and one disabled source
+  await assertSucceeds(
+    adminDb.collection("playlist_sources").doc("src_sport_vip").set({
+      id: "src_sport_vip",
+      label: "Sport VIP Live",
+      url: "https://example.com/sport.m3u8",
+      countryTag: "SPORT",
+      forcedCategory: "SPORTS",
+      forcedCountry: "International",
+      forcedLanguage: "Français",
+      enabled: true,
+      createdByUid: ADMIN_UID,
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+  await assertSucceeds(
+    adminDb.collection("playlist_sources").doc("src_disabled_test").set({
+      id: "src_disabled_test",
+      label: "Source Cachée",
+      url: "https://example.com/hidden.m3u8",
+      countryTag: "TEST",
+      forcedCategory: "",
+      forcedCountry: "",
+      forcedLanguage: "",
+      enabled: false,
+      createdByUid: ADMIN_UID,
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+
+  // Admin can list all sources (both enabled and disabled)
+  await assertSucceeds(adminDb.collection("playlist_sources").orderBy("updatedAt", "desc").get());
+
+  // Provision an active subscription for USER1_UID
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection("user_profiles").doc(USER1_UID).set({
+      userId: USER1_UID,
+      profileName: "Karim",
+      email: `${USER1_UID}@gmail.com`,
+      activeCode: "RIFI-1M-TEST",
+      planLabel: "1 Mois",
+      durationMillis: 2592000000,
+      deviceId: "dev_001",
+      revoked: false,
+      activatedAt: now,
+      updatedAt: now,
+      expiresAtMillis: Date.now() + 2592000000,
+    });
+  });
+
+  // Active subscriber can query enabled sources only, NOT unfiltered or disabled doc, NOT write
+  await assertSucceeds(userDb.collection("playlist_sources").where("enabled", "==", true).get());
+  await assertFails(userDb.collection("playlist_sources").get());
+  await assertFails(userDb.collection("playlist_sources").doc("src_disabled_test").get());
+  await assertFails(userDb.collection("playlist_sources").doc("src_sport_vip").delete());
+
+  // Once suspended by Admin, subscriber loses read access to enabled sources
+  await assertSucceeds(
+    adminDb.collection("user_profiles").doc(USER1_UID).update({
+      revoked: true,
+      updatedAt: new Date(Date.now() - 500),
+    })
+  );
+  await assertFails(userDb.collection("playlist_sources").where("enabled", "==", true).get());
+
+  // Admin can toggle and delete sources
+  await assertSucceeds(
+    adminDb.collection("playlist_sources").doc("src_disabled_test").update({
+      enabled: true,
+      updatedAt: new Date(Date.now() - 200),
+    })
+  );
+  await assertSucceeds(adminDb.collection("playlist_sources").doc("src_disabled_test").delete());
+});
+

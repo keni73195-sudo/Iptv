@@ -7,6 +7,8 @@ import android.provider.Settings
 import com.example.R
 import com.example.model.ActivationCode
 import com.example.model.ActivationCodeStatus
+import com.example.model.ChannelCategory
+import com.example.model.RemotePlaylistSource
 import com.example.model.SubscriptionPlan
 import com.example.model.UserProfile
 import com.google.firebase.FirebaseApp
@@ -559,6 +561,177 @@ class AccessRepository(private val context: Context) {
     }
   }
 
+  fun observeAllPlaylistSources(): Flow<Result<List<RemotePlaylistSource>>> =
+    callbackFlow {
+      val registration =
+        db.collection(COLLECTION_PLAYLIST_SOURCES)
+          .orderBy("updatedAt", Query.Direction.DESCENDING)
+          .addSnapshotListener { snapshot, error ->
+            if (error != null) {
+              handleFirestoreError(error, OperationType.LIST, COLLECTION_PLAYLIST_SOURCES)
+              trySend(Result.failure(error))
+              return@addSnapshotListener
+            }
+            val list =
+              snapshot?.documents?.mapNotNull { doc ->
+                doc.toObject(
+                  RemotePlaylistSource::class.java,
+                  DocumentSnapshot.ServerTimestampBehavior.ESTIMATE,
+                )
+              }.orEmpty()
+            trySend(Result.success(list))
+          }
+      awaitClose { registration.remove() }
+    }.catch { throwable ->
+      val fsEx =
+        generateSequence(throwable) { it.cause }
+          .filterIsInstance<FirebaseFirestoreException>()
+          .firstOrNull()
+      if (throwable is CancellationException && fsEx == null) {
+        throw throwable
+      }
+      emit(Result.failure(fsEx ?: throwable))
+    }
+
+  fun observeActivePlaylistSources(): Flow<Result<List<RemotePlaylistSource>>> =
+    callbackFlow {
+      val registration =
+        db.collection(COLLECTION_PLAYLIST_SOURCES)
+          .whereEqualTo("enabled", true)
+          .addSnapshotListener { snapshot, error ->
+            if (error != null) {
+              handleFirestoreError(error, OperationType.LIST, COLLECTION_PLAYLIST_SOURCES)
+              trySend(Result.failure(error))
+              return@addSnapshotListener
+            }
+            val list =
+              snapshot?.documents?.mapNotNull { doc ->
+                doc.toObject(
+                  RemotePlaylistSource::class.java,
+                  DocumentSnapshot.ServerTimestampBehavior.ESTIMATE,
+                )
+              }.orEmpty()
+            trySend(Result.success(list))
+          }
+      awaitClose { registration.remove() }
+    }.catch { throwable ->
+      val fsEx =
+        generateSequence(throwable) { it.cause }
+          .filterIsInstance<FirebaseFirestoreException>()
+          .firstOrNull()
+      if (throwable is CancellationException && fsEx == null) {
+        throw throwable
+      }
+      emit(Result.failure(fsEx ?: throwable))
+    }
+
+  suspend fun createPlaylistSource(
+    adminUid: String,
+    label: String,
+    url: String,
+    countryTag: String,
+    forcedCategory: ChannelCategory?,
+    forcedCountry: String,
+    forcedLanguage: String,
+  ): Result<RemotePlaylistSource> {
+    val cleanLabel = label.trim().take(80)
+    val cleanUrl = url.trim().take(500)
+    val cleanTag = countryTag.trim().uppercase(Locale.ROOT).ifBlank { "LIVE" }.take(16)
+    val cleanCategory = forcedCategory?.name.orEmpty().take(32)
+    val cleanCountry = forcedCountry.trim().take(60)
+    val cleanLanguage = forcedLanguage.trim().take(60)
+
+    if (cleanLabel.isEmpty()) {
+      return Result.failure(IllegalArgumentException("Saisissez un nom pour la source."))
+    }
+    if ((!cleanUrl.startsWith("http://", ignoreCase = true) &&
+        !cleanUrl.startsWith("https://", ignoreCase = true)) || cleanUrl.length < 8
+    ) {
+      return Result.failure(IllegalArgumentException("L'URL doit commencer par http:// ou https://"))
+    }
+
+    val suffix =
+      buildString(5) {
+        repeat(5) { append(CODE_ALPHABET[random.nextInt(CODE_ALPHABET.length)]) }
+      }
+    val sourceId = "src_${System.currentTimeMillis()}_$suffix"
+    val path = "$COLLECTION_PLAYLIST_SOURCES/$sourceId"
+
+    return try {
+      db.collection(COLLECTION_PLAYLIST_SOURCES)
+        .document(sourceId)
+        .set(
+          mapOf(
+            "id" to sourceId,
+            "label" to cleanLabel,
+            "url" to cleanUrl,
+            "countryTag" to cleanTag,
+            "forcedCategory" to cleanCategory,
+            "forcedCountry" to cleanCountry,
+            "forcedLanguage" to cleanLanguage,
+            "enabled" to true,
+            "createdByUid" to adminUid,
+            "createdAt" to FieldValue.serverTimestamp(),
+            "updatedAt" to FieldValue.serverTimestamp(),
+          )
+        )
+        .await()
+
+      Result.success(
+        RemotePlaylistSource(
+          id = sourceId,
+          label = cleanLabel,
+          url = cleanUrl,
+          countryTag = cleanTag,
+          forcedCategory = cleanCategory,
+          forcedCountry = cleanCountry,
+          forcedLanguage = cleanLanguage,
+          enabled = true,
+          createdByUid = adminUid,
+        )
+      )
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, path)
+      Result.failure(e)
+    }
+  }
+
+  suspend fun setPlaylistSourceEnabled(sourceId: String, enabled: Boolean): Result<Unit> {
+    val path = "$COLLECTION_PLAYLIST_SOURCES/$sourceId"
+    return try {
+      db.collection(COLLECTION_PLAYLIST_SOURCES)
+        .document(sourceId)
+        .update(
+          mapOf(
+            "enabled" to enabled,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          )
+        )
+        .await()
+      Result.success(Unit)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.UPDATE, path)
+      Result.failure(e)
+    }
+  }
+
+  suspend fun deletePlaylistSource(sourceId: String): Result<Unit> {
+    val path = "$COLLECTION_PLAYLIST_SOURCES/$sourceId"
+    return try {
+      db.collection(COLLECTION_PLAYLIST_SOURCES).document(sourceId).delete().await()
+      Result.success(Unit)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.DELETE, path)
+      Result.failure(e)
+    }
+  }
+
   private fun generateUniqueCode(plan: SubscriptionPlan): String {
     val part1 = buildString(4) {
       repeat(4) { append(CODE_ALPHABET[random.nextInt(CODE_ALPHABET.length)]) }
@@ -591,11 +764,12 @@ class AccessRepository(private val context: Context) {
 
   companion object {
     const val ADMIN_USERNAME = "bigdady"
-    const val BOOTSTRAPPED_ADMIN_EMAIL = "sheriforouyo@gmail.com"
+    const val BOOTSTRAPPED_ADMIN_EMAIL = "big@gmail.com"
     const val COLLECTION_ADMINS = "admins"
     const val COLLECTION_TIME_SYNC = "time_sync"
     const val COLLECTION_ACTIVATION_CODES = "activation_codes"
     const val COLLECTION_USER_PROFILES = "user_profiles"
+    const val COLLECTION_PLAYLIST_SOURCES = "playlist_sources"
 
     private const val CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     private val CODE_REGEX = Regex("^[A-Z0-9_-]{6,32}$")

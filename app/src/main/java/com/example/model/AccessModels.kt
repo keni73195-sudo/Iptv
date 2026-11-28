@@ -95,6 +95,33 @@ data class AdminRecord(
   val createdAt: Timestamp? = null,
 )
 
+@Keep
+@IgnoreExtraProperties
+data class RemotePlaylistSource(
+  val id: String = "",
+  val label: String = "",
+  val url: String = "",
+  val countryTag: String = "LIVE",
+  val forcedCategory: String = "",
+  val forcedCountry: String = "",
+  val forcedLanguage: String = "",
+  val enabled: Boolean = true,
+  val createdByUid: String = "",
+  val createdAt: Timestamp? = null,
+  val updatedAt: Timestamp? = null,
+) {
+  fun toPlaylistPreset(): com.example.data.PlaylistPreset =
+    com.example.data.PlaylistPreset(
+      id = "remote_$id",
+      label = label.ifBlank { "Source" },
+      countryTag = countryTag.ifBlank { "LIVE" },
+      url = url,
+      forcedCategory = ChannelCategory.entries.firstOrNull { it.name == forcedCategory },
+      forcedCountry = forcedCountry.takeIf { it.isNotBlank() },
+      forcedLanguage = forcedLanguage.takeIf { it.isNotBlank() },
+    )
+}
+
 sealed interface AccessGateState {
   data object Loading : AccessGateState
 

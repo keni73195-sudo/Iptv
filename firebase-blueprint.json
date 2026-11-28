@@ -53,6 +53,23 @@
           "updatedAt": { "type": "timestamp", "required": true },
           "expiresAtMillis": { "type": "integer", "required": true }
         }
+      },
+      "playlist_sources": {
+        "description": "Admin-managed remote M3U/M3U8 IPTV sources pushed to active subscribers in real time.",
+        "documentId": "sourceId",
+        "fields": {
+          "id": { "type": "string", "required": true },
+          "label": { "type": "string", "required": true },
+          "url": { "type": "string", "required": true },
+          "countryTag": { "type": "string", "required": true },
+          "forcedCategory": { "type": "string", "required": true },
+          "forcedCountry": { "type": "string", "required": true },
+          "forcedLanguage": { "type": "string", "required": true },
+          "enabled": { "type": "boolean", "required": true },
+          "createdByUid": { "type": "string", "required": true },
+          "createdAt": { "type": "timestamp", "required": true },
+          "updatedAt": { "type": "timestamp", "required": true }
+        }
       }
     }
   }

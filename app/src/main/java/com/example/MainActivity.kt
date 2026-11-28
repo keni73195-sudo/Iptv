@@ -59,18 +59,26 @@ class MainActivity : ComponentActivity() {
         val isAdminPanelOpen by accessViewModel.isAdminPanelOpen.collectAsStateWithLifecycle()
         val adminCodes by accessViewModel.adminCodes.collectAsStateWithLifecycle()
         val adminProfiles by accessViewModel.adminProfiles.collectAsStateWithLifecycle()
+        val adminSources by accessViewModel.adminSources.collectAsStateWithLifecycle()
+        val activeRemoteSources by accessViewModel.activeRemoteSources.collectAsStateWithLifecycle()
         val latestGeneratedCode by accessViewModel.latestGeneratedCode.collectAsStateWithLifecycle()
         val adminActionBusy by accessViewModel.adminActionBusy.collectAsStateWithLifecycle()
         val adminBanner by accessViewModel.adminBanner.collectAsStateWithLifecycle()
         val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-        val canAccessChannels = gateState is AccessGateState.Authorized && !isAdminPanelOpen
+        val isAuthorizedSession = gateState is AccessGateState.Authorized
+        val canAccessChannels = isAuthorizedSession && !isAdminPanelOpen
 
         // Immediately stop playback if expired, suspended remotely, signed out, or Admin Panel opened
         LaunchedEffect(canAccessChannels) {
           if (!canAccessChannels) {
             viewModel.forceDisconnectPlayback()
           }
+        }
+
+        // Automatically apply Admin-managed remote sources pushed via Firestore
+        LaunchedEffect(isAuthorizedSession, activeRemoteSources) {
+          viewModel.onRemoteSourcesUpdated(activeRemoteSources, isAuthorizedSession)
         }
 
         LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
@@ -107,6 +115,7 @@ class MainActivity : ComponentActivity() {
           AdminPanelScreen(
             codes = adminCodes,
             profiles = adminProfiles,
+            sources = adminSources,
             latestGeneratedCode = latestGeneratedCode,
             isBusy = adminActionBusy,
             bannerMessage = adminBanner,
@@ -116,6 +125,17 @@ class MainActivity : ComponentActivity() {
             onDeleteCode = accessViewModel::deleteCode,
             onToggleUserRevocation = accessViewModel::toggleUserRevocation,
             onExtendUserPlan = accessViewModel::extendUserPlan,
+            onAddSource = accessViewModel::addRemoteSource,
+            onToggleSource = accessViewModel::toggleRemoteSource,
+            onDeleteSource = accessViewModel::deleteRemoteSource,
+            onSyncSourcesNow = {
+              accessViewModel.closeAdminPanel()
+              viewModel.syncAllRemoteSources()
+            },
+            onOpenLocalImport = {
+              accessViewModel.closeAdminPanel()
+              viewModel.openImportDialog()
+            },
             onClearBanner = accessViewModel::clearAdminBanner,
             onClose = accessViewModel::closeAdminPanel,
             onSignOut = {

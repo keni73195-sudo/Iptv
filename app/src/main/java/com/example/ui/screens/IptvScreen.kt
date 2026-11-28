@@ -473,7 +473,7 @@ fun IptvScreen(
     }
   }
 
-  if (uiState.isImportDialogOpen) {
+  if (isAdmin && uiState.isImportDialogOpen) {
     ImportPlaylistDialog(
       isImporting = uiState.isImporting,
       isSyncingSources = uiState.isSyncingSources,

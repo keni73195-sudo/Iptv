@@ -6,12 +6,14 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.Player
 import com.example.data.DefaultPlaylists
 import com.example.data.M3uParser
+import com.example.data.PlaylistPreset
 import com.example.data.PlaylistRepository
 import com.example.model.AspectRatioMode
 import com.example.model.Channel
 import com.example.model.ChannelCategory
 import com.example.model.ChannelSortMode
 import com.example.model.PlaybackStatus
+import com.example.model.RemotePlaylistSource
 import com.example.player.IptvPlayerManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -107,6 +109,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   private val _feedbackBanner = MutableStateFlow<String?>(null)
   private val _dialedChannelInput = MutableStateFlow<String?>(null)
   private var dialTimeoutJob: kotlinx.coroutines.Job? = null
+  private var remoteAdminPresets: List<PlaylistPreset> = emptyList()
+  private var lastSyncedRemoteSignature: String? = null
+  private var remoteSyncJob: kotlinx.coroutines.Job? = null
 
   private val filterControlsFlow =
     combine(
@@ -635,6 +640,39 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     _isImportDialogOpen.value = false
   }
 
+  fun onRemoteSourcesUpdated(
+    remoteSources: List<RemotePlaylistSource>?,
+    isAuthorized: Boolean,
+  ) {
+    if (!isAuthorized || remoteSources == null) return
+    val presets = remoteSources.map { it.toPlaylistPreset() }
+    val signature =
+      remoteSources
+        .sortedBy { it.id }
+        .joinToString("|") {
+          "${it.id}:${it.url}:${it.countryTag}:${it.forcedCategory}:${it.forcedCountry}:${it.forcedLanguage}"
+        }
+    if (signature == lastSyncedRemoteSignature) return
+
+    val hadPreviousRemoteSync = lastSyncedRemoteSignature != null
+    remoteAdminPresets = presets
+    lastSyncedRemoteSignature = signature
+
+    // On initial empty remote list (admin hasn't added extra sources yet), keep normal startup sync
+    if (!hadPreviousRemoteSync && presets.isEmpty()) return
+
+    remoteSyncJob?.cancel()
+    remoteSyncJob =
+      viewModelScope.launch {
+        syncAllCatalogSources(
+          extraPresets = presets,
+          rebuildFromBundled = true,
+          closeDialogOnSuccess = false,
+          showToast = true,
+        )
+      }
+  }
+
   fun syncAllRemoteSources() {
     if (_isSyncingSources.value) return
     viewModelScope.launch {
@@ -643,13 +681,27 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   private suspend fun syncRemoteSourcesInternal(closeDialogOnSuccess: Boolean) {
+    syncAllCatalogSources(
+      extraPresets = remoteAdminPresets,
+      rebuildFromBundled = false,
+      closeDialogOnSuccess = closeDialogOnSuccess,
+      showToast = true,
+    )
+  }
+
+  private suspend fun syncAllCatalogSources(
+    extraPresets: List<PlaylistPreset>,
+    rebuildFromBundled: Boolean,
+    closeDialogOnSuccess: Boolean,
+    showToast: Boolean,
+  ) {
     _isSyncingSources.value = true
     _importError.value = null
-    val (remoteChannels, sourceCount) =
-      repository.fetchAndParseSources(DefaultPlaylists.REMOTE_SOURCES)
+    val combinedSources = DefaultPlaylists.REMOTE_SOURCES + extraPresets
+    val (remoteChannels, _) = repository.fetchAndParseSources(combinedSources)
     _isSyncingSources.value = false
 
-    if (remoteChannels.isEmpty()) {
+    if (remoteChannels.isEmpty() && !rebuildFromBundled) {
       if (closeDialogOnSuccess) {
         _importError.value = "Impossible de joindre les playlists distantes."
       }
@@ -658,14 +710,23 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     val merged =
       withContext(Dispatchers.Default) {
-        M3uParser.mergeEnrichedChannels(_channels.value, remoteChannels)
+        val base =
+          if (rebuildFromBundled) {
+            M3uParser.parse(DefaultPlaylists.loadBundledPlaylistM3u(getApplication()))
+          } else {
+            _channels.value
+          }
+        if (remoteChannels.isEmpty()) base
+        else M3uParser.mergeEnrichedChannels(base, remoteChannels)
       }
 
     _channels.value = merged
     if (closeDialogOnSuccess) {
       _isImportDialogOpen.value = false
     }
-    _feedbackBanner.value = "$sourceCount sources synchronisées • ${merged.size} chaînes"
+    if (showToast) {
+      _feedbackBanner.value = "Catalogue synchronisé • ${merged.size} chaînes"
+    }
     repository.setAutoSyncedRemote(true)
     repository.saveCustomPlaylistM3u(serializeToM3u(merged))
   }
@@ -792,6 +853,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     _isImportDialogOpen.value = false
     _pendingAdultPrompt.value = false
     _isAdultUnlocked.value = false
+    lastSyncedRemoteSignature = null
+    remoteSyncJob?.cancel()
     playerManager.stopPlaybackAndClear()
   }
 

@@ -8,13 +8,20 @@ service cloud.firestore {
 
     function isBootstrappedAdmin() {
       return isSignedIn()
-        && request.auth.token.email == 'sheriforouyo@gmail.com'
+        && request.auth.token.email == 'big@gmail.com'
         && request.auth.token.email_verified == true;
     }
 
     function isAdmin() {
       return isBootstrappedAdmin()
         || (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function hasActiveSubscription() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/user_profiles/$(request.auth.uid))
+        && get(/databases/$(database)/documents/user_profiles/$(request.auth.uid)).data.revoked == false
+        && get(/databases/$(database)/documents/user_profiles/$(request.auth.uid)).data.expiresAtMillis > request.time.toMillis();
     }
 
     function isValidId(id) {
@@ -162,6 +169,49 @@ service cloud.firestore {
         && incoming().revoked == false;
     }
 
+    function isValidPlaylistSource(d, sourceId) {
+      let allKeys = [
+        'id',
+        'label',
+        'url',
+        'countryTag',
+        'forcedCategory',
+        'forcedCountry',
+        'forcedLanguage',
+        'enabled',
+        'createdByUid',
+        'createdAt',
+        'updatedAt'
+      ];
+      return d.keys().hasAll(allKeys)
+        && d.keys().hasOnly(allKeys)
+        && d.id == sourceId
+        && d.label is string
+        && d.label.size() >= 1
+        && d.label.size() <= 80
+        && d.url is string
+        && d.url.size() >= 8
+        && d.url.size() <= 500
+        && d.url.matches('^https?://.*')
+        && d.countryTag is string
+        && d.countryTag.size() >= 1
+        && d.countryTag.size() <= 16
+        && d.forcedCategory is string
+        && d.forcedCategory.size() <= 32
+        && d.forcedCountry is string
+        && d.forcedCountry.size() <= 60
+        && d.forcedLanguage is string
+        && d.forcedLanguage.size() <= 60
+        && d.enabled is bool
+        && d.createdByUid is string
+        && d.createdByUid.size() >= 1
+        && d.createdByUid.size() <= 128
+        && d.createdAt is timestamp
+        && d.createdAt <= request.time
+        && d.updatedAt is timestamp
+        && d.updatedAt <= request.time;
+    }
+
     match /admins/{adminUid} {
       allow get: if isSignedIn() && (request.auth.uid == adminUid || isBootstrappedAdmin());
       allow list: if isBootstrappedAdmin();
@@ -261,6 +311,22 @@ service cloud.firestore {
             )
           )
         );
+      allow delete: if isAdmin();
+    }
+
+    match /playlist_sources/{sourceId} {
+      allow get: if isAdmin() || (hasActiveSubscription() && existing().enabled == true);
+      allow list: if isAdmin() || (hasActiveSubscription() && existing().enabled == true);
+      allow create: if isAdmin()
+        && isValidId(sourceId)
+        && isValidPlaylistSource(incoming(), sourceId)
+        && incoming().createdByUid == request.auth.uid;
+      allow update: if isAdmin()
+        && isValidId(sourceId)
+        && isValidPlaylistSource(incoming(), sourceId)
+        && incoming().id == existing().id
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt;
       allow delete: if isAdmin();
     }
 

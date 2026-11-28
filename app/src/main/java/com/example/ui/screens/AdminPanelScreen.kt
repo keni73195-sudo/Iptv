@@ -78,9 +78,12 @@ import com.example.R
 import com.example.data.AccessRepository
 import com.example.model.ActivationCode
 import com.example.model.ActivationCodeStatus
+import com.example.model.ChannelCategory
+import com.example.model.RemotePlaylistSource
 import com.example.model.SubscriptionPlan
 import com.example.model.UserProfile
 import com.example.model.formatRemainingDuration
+import com.example.ui.components.AdminSourcesSection
 import com.example.ui.theme.AmberFavorite
 import com.example.ui.theme.BorderSlate
 import com.example.ui.theme.ControlSurface
@@ -105,6 +108,7 @@ private enum class CodeFilterTab(val label: String) {
 fun AdminPanelScreen(
   codes: List<ActivationCode>,
   profiles: List<UserProfile>,
+  sources: List<RemotePlaylistSource>,
   latestGeneratedCode: ActivationCode?,
   isBusy: Boolean,
   bannerMessage: String?,
@@ -114,6 +118,18 @@ fun AdminPanelScreen(
   onDeleteCode: (String) -> Unit,
   onToggleUserRevocation: (UserProfile) -> Unit,
   onExtendUserPlan: (UserProfile, SubscriptionPlan) -> Unit,
+  onAddSource: (
+    label: String,
+    url: String,
+    countryTag: String,
+    forcedCategory: ChannelCategory?,
+    forcedCountry: String,
+    forcedLanguage: String,
+  ) -> Unit,
+  onToggleSource: (RemotePlaylistSource) -> Unit,
+  onDeleteSource: (String) -> Unit,
+  onSyncSourcesNow: () -> Unit,
+  onOpenLocalImport: () -> Unit,
   onClearBanner: () -> Unit,
   onClose: () -> Unit,
   onSignOut: () -> Unit,
@@ -207,7 +223,7 @@ fun AdminPanelScreen(
                   overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                  text = "${codes.size} codes • ${profiles.size} abonnés",
+                  text = "${codes.size} codes • ${profiles.size} abonnés • ${sources.size} sources",
                   style = MaterialTheme.typography.labelSmall,
                   color = InkSecondary,
                 )
@@ -252,7 +268,7 @@ fun AdminPanelScreen(
 
       Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
       ) {
         SectionTabPill(
           title = "Codes (${codes.size})",
@@ -265,6 +281,12 @@ fun AdminPanelScreen(
           selected = selectedSection == "PROFILES",
           onClick = { selectedSection = "PROFILES" },
           modifier = Modifier.weight(1f).testTag("admin_tab_profiles"),
+        )
+        SectionTabPill(
+          title = "Sources (${sources.size})",
+          selected = selectedSection == "SOURCES",
+          onClick = { selectedSection = "SOURCES" },
+          modifier = Modifier.weight(1f).testTag("admin_tab_sources"),
         )
       }
 
@@ -452,7 +474,7 @@ fun AdminPanelScreen(
           }
           item(key = "codes_bottom_spacer") { Spacer(modifier = Modifier.height(24.dp)) }
         }
-      } else {
+      } else if (selectedSection == "PROFILES") {
         LazyColumn(
           contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
           verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -474,6 +496,17 @@ fun AdminPanelScreen(
           }
           item(key = "profiles_bottom_spacer") { Spacer(modifier = Modifier.height(24.dp)) }
         }
+      } else {
+        AdminSourcesSection(
+          sources = sources,
+          isBusy = isBusy,
+          onAddSource = onAddSource,
+          onToggleSource = onToggleSource,
+          onDeleteSource = onDeleteSource,
+          onSyncNow = onSyncSourcesNow,
+          onOpenLocalImport = onOpenLocalImport,
+          modifier = Modifier.fillMaxSize(),
+        )
       }
     }
   }

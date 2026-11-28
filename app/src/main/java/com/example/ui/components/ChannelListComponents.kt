@@ -528,37 +528,39 @@ private fun HeaderRightActions(
       }
     }
 
-    // M3U / Sources import button
-    Surface(
-      color = if (isImportBtnFocused) OrangeAccent.copy(alpha = 0.28f) else Color(0xFF131722),
-      shape = CircleShape,
-      border =
-        BorderStroke(
-          width = if (isImportBtnFocused) 2.dp else 1.dp,
-          color = if (isImportBtnFocused) OrangeAccent else Color(0xFF222838),
-        ),
-      modifier =
-        Modifier
-          .size(36.dp)
-          .clip(CircleShape)
-          .onFocusChanged { isImportBtnFocused = it.isFocused }
-          .clickable(onClick = onOpenImport)
-          .testTag("header_m3u_button"),
-    ) {
-      Box(contentAlignment = Alignment.Center) {
-        if (isSyncingSources) {
-          CircularProgressIndicator(
-            color = OrangeAccent,
-            strokeWidth = 2.dp,
-            modifier = Modifier.size(16.dp),
-          )
-        } else {
-          Icon(
-            painter = painterResource(R.drawable.ic_playlist_add),
-            contentDescription = stringResource(R.string.cd_import_playlist),
-            tint = if (isImportBtnFocused) OrangeAccent else Color(0xFF9CA3AF),
-            modifier = Modifier.size(17.dp),
-          )
+    // M3U / Sources import button (Admin only)
+    if (isAdmin) {
+      Surface(
+        color = if (isImportBtnFocused) OrangeAccent.copy(alpha = 0.28f) else Color(0xFF131722),
+        shape = CircleShape,
+        border =
+          BorderStroke(
+            width = if (isImportBtnFocused) 2.dp else 1.dp,
+            color = if (isImportBtnFocused) OrangeAccent else Color(0xFF222838),
+          ),
+        modifier =
+          Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .onFocusChanged { isImportBtnFocused = it.isFocused }
+            .clickable(onClick = onOpenImport)
+            .testTag("header_m3u_button"),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          if (isSyncingSources) {
+            CircularProgressIndicator(
+              color = OrangeAccent,
+              strokeWidth = 2.dp,
+              modifier = Modifier.size(16.dp),
+            )
+          } else {
+            Icon(
+              painter = painterResource(R.drawable.ic_playlist_add),
+              contentDescription = stringResource(R.string.cd_import_playlist),
+              tint = if (isImportBtnFocused) OrangeAccent else Color(0xFF9CA3AF),
+              modifier = Modifier.size(17.dp),
+            )
+          }
         }
       }
     }

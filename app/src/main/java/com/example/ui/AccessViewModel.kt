@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.AccessRepository
 import com.example.model.AccessGateState
 import com.example.model.ActivationCode
+import com.example.model.ChannelCategory
+import com.example.model.RemotePlaylistSource
 import com.example.model.SubscriptionPlan
 import com.example.model.UserProfile
 import com.google.firebase.auth.FirebaseUser
@@ -45,9 +47,16 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
   private val _latestGeneratedCode = MutableStateFlow<ActivationCode?>(null)
   val latestGeneratedCode: StateFlow<ActivationCode?> = _latestGeneratedCode.asStateFlow()
 
+  private val _adminSources = MutableStateFlow<List<RemotePlaylistSource>>(emptyList())
+  val adminSources: StateFlow<List<RemotePlaylistSource>> = _adminSources.asStateFlow()
+
+  private val _activeRemoteSources = MutableStateFlow<List<RemotePlaylistSource>?>(null)
+  val activeRemoteSources: StateFlow<List<RemotePlaylistSource>?> = _activeRemoteSources.asStateFlow()
+
   private var profileObserverJob: Job? = null
   private var tickerJob: Job? = null
   private var adminObserverJob: Job? = null
+  private var sourcesObserverJob: Job? = null
   private var currentIsAdmin = false
   private var latestObservedProfile: UserProfile? = null
 
@@ -304,11 +313,13 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
           profile = profile,
           remainingMillis = 0L,
         )
+      ensureRemoteSourcesObserver(isAdmin = true)
       return
     }
 
     if (profile == null) {
       tickerJob?.cancel()
+      stopRemoteSourcesObserver()
       _gateState.value =
         AccessGateState.NeedsActivation(
           uid = user.uid,
@@ -320,6 +331,7 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
 
     if (profile.revoked) {
       tickerJob?.cancel()
+      stopRemoteSourcesObserver()
       _gateState.value =
         AccessGateState.NeedsActivation(
           uid = user.uid,
@@ -335,6 +347,7 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
     val remaining = profile.expiresAtMillis - repository.currentServerNowMillis()
     if (remaining <= 0L) {
       tickerJob?.cancel()
+      stopRemoteSourcesObserver()
       _gateState.value =
         AccessGateState.NeedsActivation(
           uid = user.uid,
@@ -355,6 +368,7 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
         profile = profile,
         remainingMillis = remaining,
       )
+    ensureRemoteSourcesObserver(isAdmin = false)
     startExpirationTicker(user, profile)
   }
 
@@ -366,6 +380,7 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
           delay(1_000L)
           val remaining = profile.expiresAtMillis - repository.currentServerNowMillis()
           if (remaining <= 0L) {
+            stopRemoteSourcesObserver()
             _gateState.value =
               AccessGateState.NeedsActivation(
                 uid = user.uid,
@@ -446,6 +461,33 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
     adminObserverJob = null
   }
 
+  private fun ensureRemoteSourcesObserver(isAdmin: Boolean) {
+    if (sourcesObserverJob?.isActive == true) return
+    sourcesObserverJob =
+      viewModelScope.launch {
+        if (isAdmin) {
+          repository.observeAllPlaylistSources().collect { result ->
+            result.onSuccess { list ->
+              _adminSources.value = list
+              _activeRemoteSources.value = list.filter { it.enabled }
+            }
+          }
+        } else {
+          repository.observeActivePlaylistSources().collect { result ->
+            result.onSuccess { list ->
+              _activeRemoteSources.value = list
+            }
+          }
+        }
+      }
+  }
+
+  private fun stopRemoteSourcesObserver() {
+    sourcesObserverJob?.cancel()
+    sourcesObserverJob = null
+    _activeRemoteSources.value = null
+  }
+
   private fun startAdminObservers() {
     adminObserverJob?.cancel()
     adminObserverJob =
@@ -466,6 +508,19 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
               onSuccess = { _adminProfiles.value = it },
               onFailure = { err ->
                 _adminBanner.value = err.localizedMessage ?: "Erreur chargement des abonnés."
+              },
+            )
+          }
+        }
+        launch {
+          repository.observeAllPlaylistSources().collect { result ->
+            result.fold(
+              onSuccess = {
+                _adminSources.value = it
+                _activeRemoteSources.value = it.filter { src -> src.enabled }
+              },
+              onFailure = { err ->
+                _adminBanner.value = err.localizedMessage ?: "Erreur chargement des sources."
               },
             )
           }
@@ -554,6 +609,73 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
     }
   }
 
+  fun addRemoteSource(
+    label: String,
+    url: String,
+    countryTag: String,
+    forcedCategory: ChannelCategory?,
+    forcedCountry: String,
+    forcedLanguage: String,
+  ) {
+    val adminUid = repository.auth.currentUser?.uid ?: return
+    if (!currentIsAdmin) return
+    _adminActionBusy.value = true
+    viewModelScope.launch {
+      val res =
+        repository.createPlaylistSource(
+          adminUid = adminUid,
+          label = label,
+          url = url,
+          countryTag = countryTag,
+          forcedCategory = forcedCategory,
+          forcedCountry = forcedCountry,
+          forcedLanguage = forcedLanguage,
+        )
+      _adminActionBusy.value = false
+      res.fold(
+        onSuccess = { created ->
+          _adminBanner.value = "Source « ${created.label} » publiée à distance."
+        },
+        onFailure = { err ->
+          _adminBanner.value = err.localizedMessage ?: "Impossible d'ajouter la source."
+        },
+      )
+    }
+  }
+
+  fun toggleRemoteSource(source: RemotePlaylistSource) {
+    if (!currentIsAdmin) return
+    _adminActionBusy.value = true
+    viewModelScope.launch {
+      val nextEnabled = !source.enabled
+      val res = repository.setPlaylistSourceEnabled(source.id, nextEnabled)
+      _adminActionBusy.value = false
+      res.fold(
+        onSuccess = {
+          _adminBanner.value =
+            if (nextEnabled) "Source « ${source.label} » activée pour les abonnés."
+            else "Source « ${source.label} » désactivée."
+        },
+        onFailure = { err ->
+          _adminBanner.value = err.localizedMessage ?: "Erreur mise à jour de la source."
+        },
+      )
+    }
+  }
+
+  fun deleteRemoteSource(sourceId: String) {
+    if (!currentIsAdmin) return
+    _adminActionBusy.value = true
+    viewModelScope.launch {
+      val res = repository.deletePlaylistSource(sourceId)
+      _adminActionBusy.value = false
+      res.fold(
+        onSuccess = { _adminBanner.value = "Source supprimée." },
+        onFailure = { err -> _adminBanner.value = err.localizedMessage ?: "Erreur suppression." },
+      )
+    }
+  }
+
   fun clearAdminBanner() {
     _adminBanner.value = null
   }
@@ -569,6 +691,7 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
         _isAdminPanelOpen.value = false
         _adminCodes.value = emptyList()
         _adminProfiles.value = emptyList()
+        _adminSources.value = emptyList()
         currentIsAdmin = false
         latestObservedProfile = null
         repository.auth.signOut()
@@ -582,6 +705,7 @@ class AccessViewModel(application: Application) : AndroidViewModel(application) 
     profileObserverJob = null
     tickerJob?.cancel()
     tickerJob = null
+    stopRemoteSourcesObserver()
   }
 
   override fun onCleared() {
